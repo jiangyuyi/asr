@@ -61,10 +61,45 @@ jobs:
         run: |
           python -m PyInstaller packaging/asr-mm.spec --noconfirm --clean --workpath .pyinstaller-cache
 
+      # Optional: turns a "right-click → Open" install into a double-click one.
+      # Skipped unless the Apple secrets are configured, so the build never
+      # breaks for someone without a developer account.
+      - name: Sign (macOS)
+        if: matrix.target == 'mac'
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${MACOS_CERT_P12}" ]; then
+            echo "::notice::No Apple signing secrets configured — shipping unsigned."
+            echo "::notice::macOS users will need to right-click → Open, or run the"
+            echo "::notice::shipped 'Open asr-mm.command' launcher once."
+            exit 0
+          fi
+          bash packaging/sign_macos.sh
+
       - name: Package archives
         # Deliberately plain Python: the default shell on windows-latest is
         # PowerShell, where bash syntax such as `[ ... ] && x=y` is a parse error.
         run: python packaging/make_archives.py --label ${{ matrix.label }}
+
+      # Apple issues a ticket for the exact bytes submitted, so this must run
+      # against the archives that actually get uploaded.
+      - name: Notarise (macOS)
+        if: matrix.target == 'mac'
+        env:
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+          NOTARY_PRIVATE_KEY: ${{ secrets.NOTARY_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NOTARY_PRIVATE_KEY}" ]; then
+            echo "::notice::No notarisation key configured — skipping."
+            exit 0
+          fi
+          bash packaging/notarize_macos.sh
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4

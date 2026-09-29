@@ -59,11 +59,38 @@ SenseVoice 把「同步」听成「投诉」、「之间」听成「时间」，
 
 ### 图形界面
 
-1. 下载 `asr-mm-gui` 压缩包，解压后双击 `asr-mm-gui.exe`（macOS 为 `asr-mm-gui.app`）
+1. 下载 `asr-mm-gui` 压缩包，解压后双击 `asr-mm-gui.exe`（macOS 见下）
 2. 首次使用点「工具 → 下载缺失模型」，选 Nano（约 911 MB）或 Paraformer（约 228 MB）
 3. 拖入视频，拖动时间轴选择区间，点「开始转写」
 
 **不需要预装 Python 或 ffmpeg**，两者都已打包在程序里。
+
+### macOS：首次运行需要多一步
+
+从 GitHub 下载的压缩包会被 macOS 标记为「已隔离」（quarantine）。
+未签名的程序在带标记状态下不允许加载自己的动态库，PyInstaller 打包的产物里
+全是 dylib，所以直接双击会报：
+
+```
+Failed to load Python shared library '.../_internal/Python':
+  ... not valid for use in process: library load disallowed by system policy
+```
+
+两种解法，任选其一：
+
+- **解压后双击 `Open asr-mm.command`** —— 它会自动清除隔离标记再启动，之后
+  直接双击 `asr-mm-gui` 即可。压缩包里还有 `README-macOS.txt`（中英日）。
+- **手动执行一次**：
+
+  ```bash
+  xattr -cr ~/Downloads/asr-mm-gui
+  ./asr-mm-gui/asr-mm-gui
+  ```
+
+- 或者在 Finder 里**右键 → 打开**（不是双击），再点「打开」。
+
+想要彻底免去这一步需要 Apple 开发者账号做签名公证，
+配置方式见 [docs/NOTARIZATION.md](docs/NOTARIZATION.md)。
 
 ### 命令行
 
