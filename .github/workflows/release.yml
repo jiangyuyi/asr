@@ -59,18 +59,11 @@ jobs:
         run: python -m PyInstaller packaging/asr-mm.spec --noconfirm --clean
 
       - name: Package archives
-        shell: bash
         run: |
           set -euo pipefail
-          mkdir -p release
-          VERSION="$(git describe --tags --always 2>/dev/null || echo dev)"
-          for name in asr-mm asr-mm-gui; do
-            if command -v zip >/dev/null 2>&1; then
-              zip -rq "release/${name}-${VERSION}-${{ matrix.label }}.zip" "dist/${name}"
-            else
-              tar -czf "release/${name}-${VERSION}-${{ matrix.label }}.tar.gz" -C dist "${name}"
-            fi
-          done
+          VERSION="${GITHUB_REF_NAME#v}"
+          [ "$VERSION" = "$GITHUB_REF_NAME" ] && VERSION=dev
+          python packaging/make_archives.py --version "$VERSION" --label "${{ matrix.label }}"
           ls -lh release/
 
       - name: Upload workflow artifact
