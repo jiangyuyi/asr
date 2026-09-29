@@ -1,0 +1,16 @@
+========================================================================
+FROZEN GUI 1.2.0 — loading path verification
+========================================================================
+exe: D:\Work\asr_mm\dist\asr-mm-gui\asr-mm-gui.exe
+exists: True  2.0 MB
+
+launched pid=75368
+window stayed up 20s (video arg accepted, no crash on import)
+
+GUI launched, loaded the video and stayed responsive.
+Note: the window state cannot be inspected from outside the process, so
+the detailed loader assertions come from tools/load_dialog_test.py,
+which drives the same code path in-process.
+terminated cleanly rc=1
+
+FROZEN GUI OK
