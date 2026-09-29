@@ -34,6 +34,19 @@ FunASR llama.cpp 运行时（`packaging/prepare_payload.py --target win` 会下�
 | `gui_smoke.py` | 驱动真实窗口：加载视频、跑一次识别、截图 |
 | `ffutil.py` | ffmpeg 调用封装 |
 
+## 加载与响应性
+
+| 脚本 | 作用 |
+|---|---|
+| `load_profile.py` | ffmpeg 各阶段耗时剖析（探测 / 抽帧） |
+| `load_profile_qt.py` | 用 20ms 心跳测 GUI 线程的停顿峰值 |
+| `load_progress_test.py` | 后台加载的响应性与进度回调验证 |
+| `load_dialog_test.py` | 模拟慢加载，验证加载弹窗、进度条动画与取消路径 |
+| `load_dialog_shot.py` | 三语加载弹窗截图（供文档使用） |
+
+`load_dialog_test.py` 会在测试进程内给 `media.probe` 打上延时补丁，
+用来观察数秒级加载时的真实表现，不需要准备大文件。
+
 ## 打包
 
 | 脚本 | 作用 |
@@ -49,5 +62,5 @@ FunASR llama.cpp 运行时（`packaging/prepare_payload.py --target win` 会下�
 | 脚本 | 作用 |
 |---|---|
 | `watch_ci.sh` | 轮询 release 流水线直到结束 |
-| `verify_release.sh` | 检查 release 状态、资产大小与下载链接 |
+| `verify_release.sh` | 检查 release 状态、资产大小与下载链接（可传 tag 参数） |
 | `download_and_verify.sh` | 把资产下载回来并实际运行（Windows），校验架构（macOS） |

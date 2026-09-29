@@ -19,13 +19,14 @@ from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
     QHBoxLayout, QHeaderView, QLabel, QMainWindow, QMenu, QMessageBox,
-    QProgressBar, QPushButton, QSizePolicy, QSplitter, QTableWidget,
-    QTableWidgetItem, QTimeEdit, QVBoxLayout, QWidget,
+    QProgressBar, QPushButton, QSizePolicy, QSplitter,
+    QTableWidget, QTableWidgetItem, QTimeEdit, QVBoxLayout, QWidget,
 )
 
 from .. import __version__, catalog, downloader, engine, media, transcribe
 from ..i18n import available_languages, get_language, set_language, t
 from ..srt import format_ts, render_srt, render_txt
+from .loader import LoadProgressDialog, LoadWorker, PROBE_SHARE
 from .range_slider import RangeSlider
 from .worker import Job, TranscribeWorker
 
@@ -78,9 +79,11 @@ class MainWindow(QMainWindow):
         self.info: media.MediaInfo | None = None
         self.result: transcribe.Transcript | None = None
         self.worker: TranscribeWorker | None = None
+        self.loader: LoadWorker | None = None
+        self._load_dialog: LoadProgressDialog | None = None
+        self._pending_path: Path | None = None
         self.player_ok = False
         self._syncing = False
-        self._rebuilding = False
         self._poster_pixmap = None
 
         self._pos_timer = QTimer(self)
@@ -390,17 +393,118 @@ class MainWindow(QMainWindow):
             self.load_video(Path(path))
 
     def load_video(self, path: Path) -> None:
-        try:
-            info = media.probe(path)
-        except media.MediaError as exc:
-            QMessageBox.critical(self, t("dlg.cannot_open"), str(exc))
-            return
+        """Start a background load; the window stays live until it lands."""
+        if self.loader is not None and self.loader.isRunning():
+            self.loader.cancel()
+            self.loader.wait(3000)
+        self._pending_path = path
+        self.settings.setValue("last_dir", str(path.parent))
+
+        dlg = LoadProgressDialog(t("load.title"), t("load.cancel"), 0, 100, self)
+        dlg.setWindowTitle(t("load.window"))
+        dlg.setWindowModality(Qt.WindowModal)
+        # A fast local file loads in ~200 ms; without a minimum duration the
+        # dialog would flash in and out. Anything slower still shows it.
+        dlg.setMinimumDuration(350)
+        dlg.setAutoClose(False)
+        dlg.setAutoReset(False)
+        # Indeterminate while probing: we have no honest percentage to show yet,
+        # and a bar stuck at 2% reads exactly like a hang. The decode phase
+        # switches to a real percentage.
+        dlg.setRange(0, 0)
+        dlg.setLabelText(t("load.probing", name=path.name))
+        self._load_dialog = dlg
+
+        # ffmpeg reports progress in bursts, so drive the visible value from a
+        # timer that eases toward the real one — the bar then moves smoothly
+        # instead of jumping 18% -> 100%.
+        state = {"target": 0.0, "shown": 0.0, "determinate": False}
+        smoother = QTimer(dlg)
+        smoother.setInterval(40)
+
+        def ease() -> None:
+            if not state["determinate"]:
+                return
+            delta = state["target"] - state["shown"]
+            if abs(delta) < 1.0:
+                state["shown"] = state["target"]
+                smoother.stop()
+            else:
+                state["shown"] += delta * 0.3
+            dlg.setValue(int(state["shown"]))
+
+        smoother.timeout.connect(ease)
+
+        worker = LoadWorker(str(path), self)
+        self.loader = worker
+
+        def on_progress(frac: float, key: str) -> None:
+            if self._load_dialog is None:
+                return
+            dlg.setLabelText(t(key, name=path.name))
+            if not state["determinate"] and frac > PROBE_SHARE:
+                state["determinate"] = True
+                dlg.setRange(0, 100)
+                dlg.setValue(0)
+            state["target"] = frac * 100.0
+            if state["determinate"] and not smoother.isActive():
+                smoother.start()
+
+        def stop_smoother() -> None:
+            smoother.stop()
+
+        def on_done(loaded) -> None:
+            stop_smoother()
+            self._close_load_dialog()
+            self.loader = None
+            self._apply_loaded(loaded)
+
+        def on_failed(msg: str) -> None:
+            stop_smoother()
+            self._close_load_dialog()
+            self.loader = None
+            QMessageBox.critical(self, t("dlg.cannot_open"), msg)
+
+        def on_cancel() -> None:
+            # closeEvent() also raises this, so only act while the worker is
+            # genuinely still running.
+            if not worker.isRunning():
+                return
+            worker.cancel()
+            stop_smoother()
+            self._close_load_dialog()
+            self.statusBar().showMessage(t("load.cancelled", name=path.name))
+            # Hold the reference until the thread really ends: dropping it here
+            # would let the QThread be collected while still running. The
+            # identity check keeps a stale worker from clearing a newer one.
+            def release(w=worker) -> None:
+                if self.loader is w:
+                    self.loader = None
+
+            worker.finished.connect(release)
+
+        dlg.cancelRequested.connect(on_cancel)
+        worker.progress.connect(on_progress)
+        worker.done.connect(on_done)
+        worker.failed.connect(on_failed)
+        worker.start()
+        dlg.open()
+
+    def _close_load_dialog(self) -> None:
+        dlg, self._load_dialog = self._load_dialog, None
+        if dlg is not None:
+            dlg.reset()
+            dlg.close()
+            dlg.deleteLater()
+
+    def _apply_loaded(self, loaded) -> None:
+        """Everything that used to happen synchronously in load_video()."""
+        path, info = loaded.path, loaded.info
         self.video_path, self.info = path, info
         self.result = None
         self.table.setRowCount(0)
         for b in (self.btn_copy, self.btn_save, self.btn_clip):
             b.setEnabled(False)
-        self.settings.setValue("last_dir", str(path.parent))
         self._refresh_file_label()
 
         self.slider.setDuration(info.duration)
@@ -412,6 +516,10 @@ class MainWindow(QMainWindow):
             b.setEnabled(True)
         self.btn_run.setEnabled(True)
 
+        # Show the poster straight away so the window is never a black slab
+        # while the platform player works out the format.
+        if loaded.poster is not None:
+            self._show_poster(loaded.poster)
         self.drop.hide()
         self.video.show()
         self.player.setSource(QUrl.fromLocalFile(str(path)))
@@ -423,32 +531,38 @@ class MainWindow(QMainWindow):
         if self.video_path != path:
             return
         if self.player.error() != QMediaPlayer.Error.NoError:
+            # The poster the loader already grabbed becomes the preview; no
+            # extra work is needed here.
             self.player_ok = False
-            self._show_poster(path)
+            if self._poster_pixmap is None:
+                self._show_poster(path)
             self.statusBar().showMessage(
                 t("status.preview_failed", error=self.player.errorString()))
             self.btn_play.setEnabled(False)
         else:
             self.player_ok = True
             self.btn_play.setEnabled(True)
+            self._hide_poster()
 
-    def _show_poster(self, path: Path) -> None:
-        """Preview fallback: one ffmpeg-extracted frame in the drop tile."""
-        with tempfile.TemporaryDirectory() as td:
-            jpg = media.thumbnail(path, Path(td) / "poster.jpg", at=1.0)
-            if not jpg:
-                return
-            from PySide6.QtGui import QPixmap
-            pix = QPixmap(str(jpg))
-            if pix.isNull():
-                return
-            self._poster_pixmap = pix
-            self.video.hide()
-            self.drop.setText("")
-            self.drop.setPixmap(pix.scaled(
-                self.drop.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
-            self.drop.setStyleSheet("border-radius:10px; background:#000;")
-            self.drop.show()
+    def _hide_poster(self) -> None:
+        """Swap the poster back out once the player takes over."""
+        if self._poster_pixmap is not None:
+            self.drop.hide()
+            self.video.show()
+
+    def _show_poster(self, poster: Path) -> None:
+        """Display a poster frame in place of (or behind) the video widget."""
+        from PySide6.QtGui import QPixmap
+        pix = QPixmap(str(poster))
+        if pix.isNull():
+            return
+        self._poster_pixmap = pix
+        self.video.hide()
+        self.drop.setText("")
+        self.drop.setPixmap(pix.scaled(
+            self.drop.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        self.drop.setStyleSheet("border-radius:10px; background:#000;")
+        self.drop.show()
 
     def _toggle_play(self) -> None:
         if not self.player_ok:
@@ -711,9 +825,16 @@ class MainWindow(QMainWindow):
                 return
 
     def closeEvent(self, ev) -> None:
+        self._close_load_dialog()
+        if self.loader is not None:
+            self.loader.cancel()
+            # The worker kills its own ffmpeg, so this returns promptly; the
+            # long wait only matters if the OS is wedged.
+            if not self.loader.wait(10000):
+                self.loader.setParent(None)   # do not destroy a live thread
         if self.worker is not None:
             self.worker.cancel()
-            self.worker.wait(3000)
+            self.worker.wait(5000)
         self.player.stop()
         super().closeEvent(ev)
 

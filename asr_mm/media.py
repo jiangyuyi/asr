@@ -59,19 +59,60 @@ def ffmpeg_path() -> str:
         raise MediaError(t("err.no_ffmpeg")) from exc
 
 
-def _run(args: list[str], timeout: int = 3600) -> subprocess.CompletedProcess:
+def _run(args: list[str], timeout: int = 3600,
+         proc_box: list | None = None) -> subprocess.CompletedProcess:
     cmd = [ffmpeg_path(), "-hide_banner", "-nostdin", *args]
-    # Binary-safe: the child always writes UTF-8 regardless of the host locale.
-    return subprocess.run(cmd, capture_output=True, timeout=timeout)
+    if proc_box is None:
+        # Binary-safe: the child always writes UTF-8 regardless of the host locale.
+        return subprocess.run(cmd, capture_output=True, timeout=timeout)
+    # Caller wants to be able to kill this one mid-flight.
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    proc_box.append(proc)
+    try:
+        _out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        _out, err = proc.communicate()
+        raise
+    return subprocess.CompletedProcess(cmd, proc.returncode or 0, _out, err)
 
 
-def probe(path: str | os.PathLike) -> MediaInfo:
+def _run_streaming(args: list[str], on_progress, timeout: int = 3600) -> str:
+    """Run ffmpeg with ``-progress pipe:1`` and stream percentage updates.
+
+    ``on_progress(fraction_0_to_1)`` is called as ffmpeg reports progress. This
+    is what lets the GUI show a real moving bar instead of a guess.
+    """
+    cmd = [ffmpeg_path(), "-hide_banner", "-nostdin", "-progress", "pipe:1",
+           "-nostats", *args]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    assert proc.stdout is not None
+    for raw in proc.stdout:
+        key, _, value = raw.decode("utf-8", "replace").strip().partition("=")
+        if key != "out_time_us" and key != "out_time_ms":
+            continue
+        try:
+            micros = int(value)
+        except ValueError:
+            continue
+        on_progress(micros)
+    proc.wait(timeout=timeout)
+    return proc.stderr.read().decode("utf-8", "replace") if proc.stderr else ""
+
+
+def probe(path: str | os.PathLike, proc_box: list | None = None) -> MediaInfo:
+    """Inspect a media file.
+
+    Pass ``proc_box`` (a list) to receive the ffmpeg Popen, so a caller that
+    may be cancelled — such as the GUI's background loader — can kill a probe
+    that is stuck on a slow or unreachable drive.
+    """
     p = Path(path)
     if not p.exists():
         raise MediaError(t("err.not_a_file", path=p))
     if p.is_dir():
         raise MediaError(t("err.is_dir", path=p))
-    r = _run(["-i", str(p)])
+    r = _run(["-i", str(p)], proc_box=proc_box)
     err = r.stderr.decode("utf-8", "replace")
     m = _DUR.search(err)
     if not m:
@@ -154,16 +195,34 @@ def clip(src: str | os.PathLike, dst: str | os.PathLike,
 
 
 def thumbnail(src: str | os.PathLike, dst: str | os.PathLike,
-               at: float = 1.0, width: int = 640) -> Path | None:
-    """Grab a single frame as JPEG. Used as the poster when the video
-    container/codec is not something the platform player can handle."""
+               at: float = 1.0, width: int = 640,
+               on_progress=None, proc: subprocess.Popen | None = None) -> Path | None:
+    """Grab a single frame as JPEG.
+
+    Used as the poster shown while the platform player is still opening the
+    file, and as the preview fallback when the container or codec is one the
+    system player cannot handle.
+
+    With ``on_progress`` the work runs through ``-progress pipe:1`` and reports
+    0.0–1.0 as ffmpeg decodes; pass ``proc`` to let a caller cancel it.
+    """
     src, dst = Path(src), Path(dst)
     args = ["-ss", f"{max(0.0, at):.3f}", "-i", str(src), "-frames:v", "1",
             "-vf", f"scale={width}:-2", "-q:v", "3", "-y", str(dst)]
-    r = _run(args, timeout=120)
-    if r.returncode != 0 or not dst.exists() or dst.stat().st_size == 0:
+    if on_progress is None:
+        r = _run(args, timeout=300)
+        err = r.stderr.decode("utf-8", "replace")
+    else:
+        err = _run_streaming(args, on_progress, timeout=300)
+    if not dst.exists() or dst.stat().st_size == 0:
+        return None
+    if proc is not None and proc.poll() is not None:
         return None
     return dst
+
+
+def duration_of(src: str | os.PathLike) -> float:
+    return probe(src).duration
 
 
 def probe_json(path: str | os.PathLike) -> dict:
