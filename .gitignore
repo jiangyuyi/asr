@@ -84,6 +84,8 @@ tools/verify_120.py
 tools/verify_120.txt
 tools/frozen_gui_120.py
 tools/frozen_gui_120.txt
+tools/final_121.txt
+tools/final_121_check.py
 tools/big_sample.mp4
 tools/日本語/
 
