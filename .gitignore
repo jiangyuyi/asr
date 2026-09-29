@@ -58,6 +58,13 @@ tools/dl_nano.py
 tools/enc_test.py
 tools/crop_shot.py
 tools/gui_screen.py
+tools/relaunch_gui.py
+tools/test_run_gui.py
+tools/run_gui_test.txt
+tools/_fake_dist/
+tools/_t.py
+tools/*.log
+tools/*.log.err
 
 # ---- os ----------------------------------------------------------------------
 .DS_Store

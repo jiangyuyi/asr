@@ -56,7 +56,10 @@ jobs:
         run: python packaging/prepare_payload.py --target ${{ matrix.target }}
 
       - name: Build bundles
-        run: python -m PyInstaller packaging/asr-mm.spec --noconfirm --clean
+        # --workpath keeps the PyInstaller cache out of a directory that looks
+        # like output: the exes it leaves behind cannot run on their own.
+        run: |
+          python -m PyInstaller packaging/asr-mm.spec --noconfirm --clean --workpath .pyinstaller-cache
 
       - name: Package archives
         # Deliberately plain Python: the default shell on windows-latest is
