@@ -1,0 +1,28 @@
+# Normalise line endings in the repository.
+#
+# Git for Windows checks files out with CRLF by default, which silently breaks
+# shell scripts and workflow YAML on the Linux/macOS CI runners. Pin LF in the
+# index so the tree is identical on every platform.
+
+* text=auto eol=lf
+
+*.py    text eol=lf
+*.md    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.toml  text eol=lf
+*.spec  text eol=lf
+*.sh    text eol=lf
+*.txt   text eol=lf
+*.gitignore text eol=lf
+*.gitattributes text eol=lf
+
+*.png   binary
+*.jpg   binary
+*.zip   binary
+*.gz    binary
+*.exe   binary
+*.dll   binary
+*.dylib binary
+*.gguf  binary
+*.ico   binary
