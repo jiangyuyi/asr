@@ -171,8 +171,11 @@ python tools/e2e_test.py            # 11 项端到端（需已下载模型）
 
 ## 许可与来源
 
-- 代码：MIT
+代码 MIT（见 [LICENSE](LICENSE)）。以下第三方组件各有独立许可，随程序分发或运行时下载：
+
 - 识别引擎：[modelscope/FunASR](https://github.com/modelscope/FunASR) llama.cpp 运行时，MIT
 - 模型：Fun-ASR-Nano / Paraformer / SenseVoice / FSMN-VAD，均为 MIT
-- 解码器：FFmpeg（随 `imageio-ffmpeg` 分发的静态构建）
-- 界面：PySide6（Qt LGPL v3）
+- 解码器：FFmpeg（LGPL v2.1+，随 `imageio-ffmpeg` 分发的静态构建）
+- 界面：PySide6 / Qt 6（LGPL v3）
+
+模型权重不随仓库分发，运行时从 HuggingFace 下载并做体积校验。
