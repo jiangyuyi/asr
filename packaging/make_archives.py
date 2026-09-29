@@ -16,6 +16,9 @@ import sys
 import zipfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import macos_extras  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 DIST = ROOT / "dist"
 BUNDLES = ("asr-mm", "asr-mm-gui")
@@ -35,11 +38,35 @@ def archive(bundle: str, out_dir: Path, version: str, label: str) -> Path:
         raise SystemExit(f"缺少构建产物: {src}\n请先运行 pyinstaller。")
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / f"{bundle}-{version}-{label}.zip"
+    is_macos = label.startswith("macos")
     print(f"packing {bundle} -> {out.name} …", flush=True)
+
     files = [p for p in src.rglob("*") if p.is_file()]
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
         for p in files:
-            z.write(p, Path(bundle) / p.relative_to(src))
+            # Executable bits are not stored by zipfile on its own; carry them
+            # over explicitly or the binaries lose +x on extraction.
+            info = zipfile.ZipInfo.from_file(p, str(Path(bundle) / p.relative_to(src)))
+            mode = p.stat().st_mode
+            info.external_attr = ((mode & 0o7777) | 0o100000) << 16
+            if is_macos:
+                info.create_system = 3        # Unix, so the mode above applies
+            z.writestr(info, p.read_bytes())
+
+        if is_macos:
+            # A quarantined, unsigned bundle will not load its own libraries.
+            # Ship a launcher that clears the mark on first run, pointing at
+            # the binary this archive actually contains.
+            extras = macos_extras.files_for(bundle)
+            for name, body in extras.items():
+                extra = zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0))
+                executable = name.endswith(".command")
+                extra.create_system = 3        # Unix, so the mode below applies
+                extra.external_attr = (0o100755 if executable else 0o100644) << 16
+                z.writestr(extra, body.encode("utf-8"))
+            print(f"  + {len(extras)} macOS helper files "
+                  f"({', '.join(extras)})")
+
     print(f"  {len(files)} files, {out.stat().st_size / 1_048_576:.1f} MB")
     return out
 
