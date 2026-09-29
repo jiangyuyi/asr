@@ -63,8 +63,14 @@ tools/test_run_gui.py
 tools/run_gui_test.txt
 tools/_fake_dist/
 tools/_t.py
+tools/_i18n_patch.py
+tools/enc_stress/
 tools/*.log
 tools/*.log.err
+tools/enc_stress.txt
+tools/enc_isolate.txt
+tools/enc_fix.txt
+tools/gui_i18n.txt
 
 # ---- os ----------------------------------------------------------------------
 .DS_Store

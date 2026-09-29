@@ -6,6 +6,13 @@
 
 ![界面](docs/screenshot.png)
 
+界面支持 **简体中文 / English / 日本語**，可在右上角切换或用 `asr-mm --lang ja` 指定。
+转写结果的语言始终由音频内容决定（当前引擎面向中文语音），与界面语言无关。
+
+| 日本語 | English |
+|---|---|
+| ![日本語](docs/screenshot-ja.png) | ![English](docs/screenshot-en.png) |
+
 ---
 
 ## 为什么这么做
@@ -68,9 +75,13 @@ asr-mm transcribe 视频.mp4                          # 整段
 asr-mm transcribe 视频.mp4 -s 00:03:20 -e 00:05:10  # 指定区间
 asr-mm transcribe 视频.mp4 -s 200 -e 310 -m paraformer
 asr-mm transcribe 视频.mp4 --stdout --output-format srt | clip   # 管道
+
+asr-mm --lang ja models list                        # 界面语言
+asr-mm --lang en doctor 视频.mp4
 ```
 
 时间码支持 `HH:MM:SS.zzz` / `MM:SS` / 纯秒数。
+界面语言默认跟随系统（Windows 读系统 UI 语言，macOS/Linux 读 `LC_ALL`/`LANG`），GUI 里的选择会记住。
 
 ### 从源码运行
 
@@ -147,6 +158,17 @@ python -m PyInstaller packaging/asr-mm.spec --noconfirm --workpath .pyinstaller-
 
 **暂不支持说话人分离。** 底层 llama.cpp 运行时没有实现 CAM++，
 所以「谁在说」需要走 FunASR Python 管线。这是已知的取舍。
+
+**日文/中文 Windows 上的路径问题已处理。** llama.cpp 的 GGUF 加载器用窄字符
+`fopen` 打开模型，路径里的非 ASCII 字符会按系统 ANSI 代码页解释，
+在 CP932（日文 Windows）下 `C:\Users\日本語\...` 会导致模型**加载失败**。
+因此当用户目录含非 ASCII 字符时，模型会被**硬链接**到同卷的纯 ASCII 目录
+（`%PUBLIC%\asr-mm\models` 等，优先与用户目录同盘以避免拷贝），不额外占用磁盘。
+已实测：中文/日文/西里尔/emoji/含空格文件名、日文目录下的音频路径、
+中文/日文目录下的可执行文件路径全部通过。
+
+其它编码点：所有文件读写显式 UTF-8，子进程输出按 UTF-8 解码，
+控制台在非 UTF-8 代码页下会被强制切到 UTF-8，Qt 本身是 Unicode 原生。
 
 ---
 

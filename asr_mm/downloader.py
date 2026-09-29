@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 from . import catalog, paths
+from .i18n import t
 
 Progress = Callable[[str, int, int], None]  # (filename, done_bytes, total_bytes)
 
@@ -82,14 +83,14 @@ def download(url: str, dst: Path, *, expect_size: int = 0,
             if attempt == retries:
                 raise
     else:  # pragma: no cover
-        raise RuntimeError(f"下载失败: {url}") from last_err
+        raise RuntimeError(t("err.download_failed", url=url)) from last_err
 
     if expect_sha256:
         got = _sha256(part)
         if got != expect_sha256.lower():
             part.unlink(missing_ok=True)
-            raise RuntimeError(
-                f"校验失败 {dst.name}\n  期望 sha256 {expect_sha256}\n  实际 {got}")
+            raise RuntimeError(t("err.sha_mismatch", name=dst.name,
+                                       expected=expect_sha256, actual=got))
     part.replace(dst)
     return dst
 
@@ -151,9 +152,9 @@ def detect_runtime_key() -> str:
         return "macos-arm64"
     if system == "Linux" and machine in ("x86_64", "amd64"):
         return "linux-x64"
-    raise RuntimeError(
-        f"暂不支持的平台: {system}/{machine}。"
-        "可手动放置 llama-funasr-* 可执行文件到 " + str(paths.runtime_dir()))
+    raise RuntimeError(t("err.unsupported_platform",
+                           platform=f"{system}/{machine}",
+                           dir=paths.runtime_dir()))
 
 
 def runtime_status() -> dict:
@@ -182,7 +183,7 @@ def ensure_runtime(progress: Progress | None = None) -> Path:
     _extract(archive, dest)
     missing = [m for m in spec.members if not (dest / m).exists()]
     if missing:
-        raise RuntimeError(f"运行时解压后仍缺少: {', '.join(missing)}")
+        raise RuntimeError(t("err.runtime_incomplete", names=", ".join(missing)))
     return dest
 
 
@@ -197,7 +198,7 @@ def _extract(archive: Path, dest: Path) -> None:
         with tarfile.open(archive, "r:gz") as t:
             _safe_tar_extract(t, tmp)
     else:
-        raise RuntimeError(f"无法解压的归档格式: {archive.name}")
+        raise RuntimeError(t("err.bad_archive", name=archive.name))
     # Archives may or may not have a top-level directory.
     inner = [p for p in tmp.iterdir() if p.is_dir()]
     if len(inner) == 1 and not any(tmp.glob("llama-funasr-*")):
@@ -215,7 +216,7 @@ def _safe_zip_extract(z: zipfile.ZipFile, dest: Path) -> None:
     for member in z.infolist():
         target = (dest / member.filename).resolve()
         if not str(target).startswith(str(root)):
-            raise RuntimeError(f"归档包含越界路径: {member.filename}")
+            raise RuntimeError(t("err.zip_escape", name=member.filename))
     z.extractall(dest)
 
 
@@ -224,9 +225,9 @@ def _safe_tar_extract(t: tarfile.TarFile, dest: Path) -> None:
     for member in t.getmembers():
         target = (dest / member.name).resolve()
         if not str(target).startswith(str(root)):
-            raise RuntimeError(f"归档包含越界路径: {member.name}")
+            raise RuntimeError(t("err.zip_escape", name=member.name))
         if member.issym() or member.islnk():
-            raise RuntimeError(f"归档包含链接，已拒绝: {member.name}")
+            raise RuntimeError(t("err.tar_link", name=member.name))
     t.extractall(dest, filter="data")
 
 
@@ -273,9 +274,13 @@ def clear_progress_line(stream=None) -> None:
 
 def status_table() -> Iterable[str]:
     rt = runtime_status()
-    yield f"运行时: {rt['label']}  {'已就绪' if rt['ready'] else '未安装'}  -> {rt['dir']}"
+    state = t("cli.status_ready") if rt["ready"] else t("cli.status_missing")
+    yield f"  {t('cli.doctor.runtime')}: {rt['label']}  {state}  -> {rt['dir']}"
     for spec in catalog.MODELS.values():
         missing = missing_files(spec)
-        state = "已就绪" if not missing else \
-            f"缺 {len(missing)} 个文件 ({human(total_size(spec))})"
-        yield f"模型 {spec.key:11s} {state}"
+        if not missing:
+            detail = t("cli.models.state_ready")
+        else:
+            detail = t("cli.doctor.model_incomplete_short", count=len(missing),
+                       size=human(total_size(spec)))
+        yield f"  {t('cli.doctor.models')} {spec.key:11s} {detail}"

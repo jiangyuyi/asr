@@ -1,4 +1,10 @@
-"""PySide6 desktop UI: pick a time window on a video, transcribe it, edit, export."""
+"""PySide6 desktop UI: pick a time window on a video, transcribe it, edit, export.
+
+Interface strings come from :mod:`asr_mm.i18n`. Switching language calls
+``MainWindow.retranslate()``, which re-applies every visible string in place
+rather than rebuilding the widgets, so the user's scroll position, selection and
+any edits in the result table survive the switch.
+"""
 from __future__ import annotations
 
 import json
@@ -12,19 +18,19 @@ from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
-    QFrame, QHBoxLayout, QHeaderView, QLabel, QMainWindow, QMenu, QMessageBox,
-    QPlainTextEdit, QProgressBar, QPushButton, QSizePolicy, QSplitter, QTableWidget,
+    QHBoxLayout, QHeaderView, QLabel, QMainWindow, QMenu, QMessageBox,
+    QProgressBar, QPushButton, QSizePolicy, QSplitter, QTableWidget,
     QTableWidgetItem, QTimeEdit, QVBoxLayout, QWidget,
 )
 
 from .. import __version__, catalog, downloader, engine, media, transcribe
+from ..i18n import available_languages, get_language, set_language, t
 from ..srt import format_ts, render_srt, render_txt
 from .range_slider import RangeSlider
 from .worker import Job, TranscribeWorker
 
-VIDEO_FILTER = ("视频文件 (*.mp4 *.mkv *.avi *.mov *.flv *.wmv *.m4v *.ts *.webm "
-                "*.mpg *.mpeg *.rmvb *.3gp);;所有文件 (*.*)")
-TEXT_FILTER = "文本文件 (*.txt);;字幕文件 (*.srt);;JSON (*.json)"
+VIDEO_SUFFIXES = ("*.mp4 *.mkv *.avi *.mov *.flv *.wmv *.m4v *.ts *.webm "
+                  "*.mpg *.mpeg *.rmvb *.3gp")
 
 
 def tc(seconds: float) -> str:
@@ -37,13 +43,14 @@ class DropVideoLabel(QLabel):
     clicked = Signal()
 
     def __init__(self) -> None:
-        super().__init__("拖入视频文件\n或点击这里选择")
+        super().__init__()
         self.setAlignment(Qt.AlignCenter)
         self.setAcceptDrops(True)
         self.setMinimumSize(480, 300)
         self.setStyleSheet(
             "border: 2px dashed #b9c0cc; border-radius: 10px;"
             "color:#6b7280; background:#fafbfc; font-size:15px;")
+        self.setText(t("drop.hint"))
 
     def mousePressEvent(self, ev) -> None:
         if ev.button() == Qt.LeftButton:
@@ -65,7 +72,6 @@ class DropVideoLabel(QLabel):
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle(f"asr-mm · 视频片段转写 {__version__}")
         self.resize(1180, 800)
 
         self.video_path: Path | None = None
@@ -74,13 +80,20 @@ class MainWindow(QMainWindow):
         self.worker: TranscribeWorker | None = None
         self.player_ok = False
         self._syncing = False
+        self._rebuilding = False
+        self._poster_pixmap = None
+
         self._pos_timer = QTimer(self)
         self._pos_timer.setInterval(200)
         self._pos_timer.timeout.connect(self._tick_playhead)
 
         self.settings = QSettings("asr-mm", "asr-mm")
+        stored = self.settings.value("lang", "")
+        if stored:
+            set_language(stored)
         self._build_ui()
         self._build_menu()
+        self.retranslate()
         self._refresh_model_state()
 
     # ------------------------------------------------------------------- ui
@@ -90,26 +103,35 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(12, 10, 12, 10)
         root.setSpacing(10)
 
-        # ---- top: open + model
+        # ---- top row: open + model + language
         top = QHBoxLayout()
-        self.btn_open = QPushButton("打开视频…")
+        self.btn_open = QPushButton()
         self.btn_open.clicked.connect(self.choose_video)
-        self.lbl_file = QLabel("未选择文件")
+        self.lbl_file = QLabel()
         self.lbl_file.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.lbl_file.setStyleSheet("color:#6b7280;")
+        self.lbl_model_caption = QLabel()
         top.addWidget(self.btn_open)
         top.addWidget(self.lbl_file, 1)
-        top.addWidget(QLabel("模型"))
+        top.addWidget(self.lbl_model_caption)
         self.cmb_model = QComboBox()
         for spec in catalog.MODELS.values():
-            self.cmb_model.addItem(spec.label, spec.key)
+            self.cmb_model.addItem("", spec.key)
         self.cmb_model.setCurrentIndex(0)
         self.cmb_model.currentIndexChanged.connect(lambda _: self._refresh_model_state())
-        self.cmb_model.setToolTip("Nano 标点最完整；Paraformer 最快但无标点")
         top.addWidget(self.cmb_model)
+        self.lbl_lang_caption = QLabel()
+        top.addWidget(self.lbl_lang_caption)
+        self.cmb_lang = QComboBox()
+        for code, native in available_languages():
+            self.cmb_lang.addItem(native, code)
+        self.cmb_lang.setCurrentIndex(
+            max(0, [c for c, _ in available_languages()].index(get_language())))
+        self.cmb_lang.currentIndexChanged.connect(self._on_lang_changed)
+        top.addWidget(self.cmb_lang)
         root.addLayout(top)
 
-        # ---- middle splitter: preview | controls
+        # ---- middle: preview | controls
         split = QSplitter(Qt.Horizontal)
 
         left = QWidget()
@@ -124,8 +146,6 @@ class MainWindow(QMainWindow):
         self.video.setStyleSheet("background:#000; border-radius:8px;")
         self.video.hide()
         ll.addWidget(self.video)
-
-        self.pos_slider = QWidget()  # placeholder keeps layout stable
         ll.addStretch(1)
         split.addWidget(left)
 
@@ -134,7 +154,8 @@ class MainWindow(QMainWindow):
         rl = QVBoxLayout(right)
         rl.setContentsMargins(6, 0, 0, 0)
 
-        rl.addWidget(self._section("时间区间"))
+        self.sec_range = self._section("")
+        rl.addWidget(self.sec_range)
         self.slider = RangeSlider()
         self.slider.startMoved.connect(lambda v: self._set_time(self.spin_start, v))
         self.slider.endMoved.connect(lambda v: self._set_time(self.spin_end, v))
@@ -142,6 +163,8 @@ class MainWindow(QMainWindow):
         rl.addWidget(self.slider)
 
         form = QFormLayout()
+        self.lbl_start = QLabel()
+        self.lbl_end = QLabel()
         self.spin_start = QTimeEdit()
         self.spin_end = QTimeEdit()
         for s in (self.spin_start, self.spin_end):
@@ -149,40 +172,38 @@ class MainWindow(QMainWindow):
             s.setEnabled(False)
         self.spin_start.timeChanged.connect(self._on_spin_changed)
         self.spin_end.timeChanged.connect(self._on_spin_changed)
-
-        b1 = QPushButton("起点 = 当前位置")
-        b1.clicked.connect(lambda: self._set_range_from_player(0))
-        b2 = QPushButton("终点 = 当前位置")
-        b2.clicked.connect(lambda: self._set_range_from_player(1))
-        for b in (b1, b2):
-            b.setEnabled(False)
-        self._range_buttons = (b1, b2)
+        self.btn_set_start = QPushButton()
+        self.btn_set_start.clicked.connect(lambda: self._set_range_from_player(0))
+        self.btn_set_end = QPushButton()
+        self.btn_set_end.clicked.connect(lambda: self._set_range_from_player(1))
+        self.btn_set_start.setEnabled(False)
+        self.btn_set_end.setEnabled(False)
+        self._range_buttons = (self.btn_set_start, self.btn_set_end)
 
         row = QHBoxLayout()
-        row.addWidget(b1)
-        row.addWidget(b2)
-        form.addRow("开始", self.spin_start)
-        form.addRow("结束", self.spin_end)
+        row.addWidget(self.btn_set_start)
+        row.addWidget(self.btn_set_end)
+        form.addRow(self.lbl_start, self.spin_start)
+        form.addRow(self.lbl_end, self.spin_end)
         form.addRow("", row)
 
-        self.btn_play = QPushButton("▶ 播放")
+        self.btn_play = QPushButton()
         self.btn_play.clicked.connect(self._toggle_play)
         self.btn_play.setEnabled(False)
         form.addRow("", self.btn_play)
         rl.addLayout(form)
 
-        rl.addWidget(self._section("识别选项"))
+        self.sec_options = self._section("")
+        rl.addWidget(self.sec_options)
+        self.lbl_preroll = QLabel()
         self.spin_preroll = QDoubleSpinBox()
         self.spin_preroll.setRange(0.0, 5.0)
         self.spin_preroll.setSingleStep(0.1)
         self.spin_preroll.setValue(0.0)
-        self.spin_preroll.setSuffix(" 秒")
-        self.spin_preroll.setToolTip("起点前多取一点，避免切到半个字")
-        self.chk_drop = QCheckBox("过滤疑似噪音片段")
-        self.chk_drop.setToolTip("丢掉极短且字数极少的识别结果（常见于纯噪音）")
-        self.chk_loud = QCheckBox("先做响度归一化")
+        self.chk_drop = QCheckBox()
+        self.chk_loud = QCheckBox()
         f2 = QFormLayout()
-        f2.addRow("预读", self.spin_preroll)
+        f2.addRow(self.lbl_preroll, self.spin_preroll)
         f2.addRow("", self.chk_drop)
         f2.addRow("", self.chk_loud)
         rl.addLayout(f2)
@@ -192,7 +213,7 @@ class MainWindow(QMainWindow):
         self.lbl_model_state.setStyleSheet("color:#6b7280; font-size:12px;")
         rl.addWidget(self.lbl_model_state)
 
-        self.btn_run = QPushButton("开始转写")
+        self.btn_run = QPushButton()
         self.btn_run.setMinimumHeight(42)
         self.btn_run.setStyleSheet(
             "QPushButton{background:#3b82f6;color:white;font-size:15px;font-weight:600;"
@@ -200,7 +221,6 @@ class MainWindow(QMainWindow):
         self.btn_run.clicked.connect(self.run_transcribe)
         self.btn_run.setEnabled(False)
         rl.addWidget(self.btn_run)
-
         rl.addStretch(1)
         split.addWidget(right)
         split.setStretchFactor(0, 3)
@@ -208,14 +228,14 @@ class MainWindow(QMainWindow):
         root.addWidget(split, 3)
 
         # ---- results
-        root.addWidget(self._section("识别结果"))
+        self.sec_results = self._section("")
+        root.addWidget(self.sec_results)
         self.table = QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(["开始", "时长", "文字（可双击编辑）"])
+        self.table.setColumnWidth(0, 110)
+        self.table.setColumnWidth(1, 80)
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Fixed)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
-        self.table.setColumnWidth(0, 110)
-        self.table.setColumnWidth(1, 80)
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.itemSelectionChanged.connect(self._on_row_selected)
@@ -227,11 +247,11 @@ class MainWindow(QMainWindow):
 
         # ---- bottom bar
         bottom = QHBoxLayout()
-        self.btn_copy = QPushButton("复制全文")
+        self.btn_copy = QPushButton()
         self.btn_copy.clicked.connect(self.copy_text)
-        self.btn_save = QPushButton("导出…")
+        self.btn_save = QPushButton()
         self.btn_save.clicked.connect(self.export)
-        self.btn_clip = QPushButton("导出该段视频")
+        self.btn_clip = QPushButton()
         self.btn_clip.clicked.connect(self.export_clip)
         for b in (self.btn_copy, self.btn_save, self.btn_clip):
             b.setEnabled(False)
@@ -248,7 +268,6 @@ class MainWindow(QMainWindow):
 
         self.setCentralWidget(central)
         self.setAcceptDrops(True)
-        self.statusBar().showMessage("就绪。首次使用请先下载模型：asr-mm setup")
 
         self.player = QMediaPlayer(self)
         self.player.setVideoOutput(self.video)
@@ -256,7 +275,6 @@ class MainWindow(QMainWindow):
         self.audio_out.setVolume(1.0)
         self.player.setAudioOutput(self.audio_out)
         self.player.positionChanged.connect(self._on_position)
-        self.player.durationChanged.connect(self._on_duration)
         self.player.errorOccurred.connect(self._on_player_error)
 
     def _section(self, title: str) -> QLabel:
@@ -265,37 +283,109 @@ class MainWindow(QMainWindow):
         return lab
 
     def _build_menu(self) -> None:
-        m = self.menuBar().addMenu("文件(&F)")
-        a = QAction("打开视频…", self)
-        a.setShortcut(QKeySequence.Open)
-        a.triggered.connect(self.choose_video)
-        m.addAction(a)
-        m.addSeparator()
-        a2 = QAction("退出", self)
-        a2.setShortcut(QKeySequence.Quit)
-        a2.triggered.connect(self.close)
-        m.addAction(a2)
+        self.menu_file = self.menuBar().addMenu("")
+        self.act_open = QAction(self)
+        self.act_open.setShortcut(QKeySequence.Open)
+        self.act_open.triggered.connect(self.choose_video)
+        self.menu_file.addAction(self.act_open)
+        self.menu_file.addSeparator()
+        self.act_quit = QAction(self)
+        self.act_quit.setShortcut(QKeySequence.Quit)
+        self.act_quit.triggered.connect(self.close)
+        self.menu_file.addAction(self.act_quit)
 
-        m2 = self.menuBar().addMenu("工具(&T)")
-        a3 = QAction("下载缺失模型…", self)
-        a3.triggered.connect(self.download_models)
-        m2.addAction(a3)
-        a4 = QAction("打开模型目录", self)
-        a4.triggered.connect(self.open_models_dir)
-        m2.addAction(a4)
-        a5 = QAction("自检", self)
-        a5.triggered.connect(self.doctor)
-        m2.addAction(a5)
+        self.menu_tools = self.menuBar().addMenu("")
+        self.act_download = QAction(self)
+        self.act_download.triggered.connect(self.download_models)
+        self.menu_tools.addAction(self.act_download)
+        self.act_open_models = QAction(self)
+        self.act_open_models.triggered.connect(self.open_models_dir)
+        self.menu_tools.addAction(self.act_open_models)
+        self.act_doctor = QAction(self)
+        self.act_doctor.triggered.connect(self.doctor)
+        self.menu_tools.addAction(self.act_doctor)
 
-        h = self.menuBar().addMenu("帮助(&H)")
-        a6 = QAction("关于", self)
-        a6.triggered.connect(self.about)
-        h.addAction(a6)
+        self.menu_help = self.menuBar().addMenu("")
+        self.act_about = QAction(self)
+        self.act_about.triggered.connect(self.about)
+        self.menu_help.addAction(self.act_about)
+
+    # ------------------------------------------------------------ retranslate
+    def retranslate(self) -> None:
+        """Re-apply every visible string in the active language."""
+        if not hasattr(self, "table"):
+            return
+        self.setWindowTitle(t("app.title", version=__version__))
+        self.btn_open.setText(t("toolbar.open"))
+        self.lbl_model_caption.setText(t("toolbar.model"))
+        self.lbl_lang_caption.setText(t("toolbar.language"))
+        self.cmb_model.setItemText(0, t("model.nano"))
+        self.cmb_model.setItemText(1, t("model.paraformer"))
+        self.cmb_model.setItemText(2, t("model.sensevoice"))
+        self.cmb_model.setToolTip(t("model.nano.note"))
+
+        self.sec_range.setText(t("section.range"))
+        self.lbl_start.setText(t("range.start"))
+        self.lbl_end.setText(t("range.end"))
+        self.btn_set_start.setText(t("range.set_start"))
+        self.btn_set_end.setText(t("range.set_end"))
+        self.btn_play.setText(t("play"))
+        self.sec_options.setText(t("section.options"))
+        self.lbl_preroll.setText(t("opt.preroll"))
+        self.spin_preroll.setSuffix(t("opt.preroll_suffix"))
+        self.spin_preroll.setToolTip(t("opt.preroll_tip"))
+        self.chk_drop.setText(t("opt.drop_short"))
+        self.chk_drop.setToolTip(t("opt.drop_short_tip"))
+        self.chk_loud.setText(t("opt.loudnorm"))
+        self.chk_loud.setToolTip(t("opt.loudnorm_tip"))
+        self.btn_run.setText(t("run"))
+        self.sec_results.setText(t("section.results"))
+        self.table.setHorizontalHeaderLabels([t("table.col_start"),
+                                              t("table.col_dur"),
+                                              t("table.col_text")])
+        self.btn_copy.setText(t("action.copy"))
+        self.btn_save.setText(t("action.export"))
+        self.btn_clip.setText(t("action.export_clip"))
+
+        self.menu_file.setTitle(t("menu.file"))
+        self.act_open.setText(t("menu.open"))
+        self.act_quit.setText(t("menu.quit"))
+        self.menu_tools.setTitle(t("menu.tools"))
+        self.act_download.setText(t("menu.download_models"))
+        self.act_open_models.setText(t("menu.open_models"))
+        self.act_doctor.setText(t("menu.doctor"))
+        self.menu_help.setTitle(t("menu.help"))
+        self.act_about.setText(t("menu.about"))
+
+        if self.drop.pixmap() is None or self._poster_pixmap is None:
+            self.drop.setText(t("drop.hint"))
+        self._refresh_file_label()
+        self._refresh_model_state()
+
+    def _on_lang_changed(self, index: int) -> None:
+        code = self.cmb_lang.itemData(index)
+        if not code or code == get_language():
+            return
+        set_language(code)
+        self.settings.setValue("lang", code)
+        self.retranslate()
+        self.statusBar().showMessage(t("status.ready"))
 
     # ----------------------------------------------------------------- video
+    def _refresh_file_label(self) -> None:
+        if not (self.video_path and self.info):
+            self.lbl_file.setText("—")
+            return
+        self.lbl_file.setText(f"{self.video_path.name}   "
+                              f"({tc(self.info.duration)} · "
+                              f"{self.info.size_mb:.0f} {t('units.mb_short')} · "
+                              f"{self.info.audio_codec})")
+        self.lbl_file.setToolTip(str(self.video_path))
+
     def choose_video(self) -> None:
         start = self.settings.value("last_dir", "")
-        path, _ = QFileDialog.getOpenFileName(self, "选择视频", start, VIDEO_FILTER)
+        path, _ = QFileDialog.getOpenFileName(
+            self, t("filedialog.video"), start, t("filter.video"))
         if path:
             self.load_video(Path(path))
 
@@ -303,18 +393,15 @@ class MainWindow(QMainWindow):
         try:
             info = media.probe(path)
         except media.MediaError as exc:
-            QMessageBox.critical(self, "无法打开", str(exc))
+            QMessageBox.critical(self, t("dlg.cannot_open"), str(exc))
             return
         self.video_path, self.info = path, info
         self.result = None
         self.table.setRowCount(0)
         for b in (self.btn_copy, self.btn_save, self.btn_clip):
             b.setEnabled(False)
-
-        self.lbl_file.setText(f"{path.name}   ({tc(info.duration)} · "
-                              f"{info.size_mb:.0f} MB · {info.audio_codec})")
-        self.lbl_file.setToolTip(str(path))
         self.settings.setValue("last_dir", str(path.parent))
+        self._refresh_file_label()
 
         self.slider.setDuration(info.duration)
         self.slider.setRange(0.0, info.duration)
@@ -329,25 +416,24 @@ class MainWindow(QMainWindow):
         self.video.show()
         self.player.setSource(QUrl.fromLocalFile(str(path)))
         QTimer.singleShot(1200, lambda: self._confirm_playback(path))
-        self.statusBar().showMessage(f"已加载 {path.name}，时长 {tc(info.duration)}")
+        self.statusBar().showMessage(
+            t("status.loaded", name=path.name, duration=tc(info.duration)))
 
     def _confirm_playback(self, path: Path) -> None:
         if self.video_path != path:
             return
-        err = self.player.error()
-        if err != QMediaPlayer.Error.NoError:
+        if self.player.error() != QMediaPlayer.Error.NoError:
             self.player_ok = False
             self._show_poster(path)
             self.statusBar().showMessage(
-                f"该格式无法在系统播放器中预览（{self.player.errorString()}）。"
-                "不影响转写，可直接用时间输入框选择区间。")
+                t("status.preview_failed", error=self.player.errorString()))
             self.btn_play.setEnabled(False)
         else:
             self.player_ok = True
             self.btn_play.setEnabled(True)
 
     def _show_poster(self, path: Path) -> None:
-        """Preview fallback: a single ffmpeg-extracted frame in the drop tile."""
+        """Preview fallback: one ffmpeg-extracted frame in the drop tile."""
         with tempfile.TemporaryDirectory() as td:
             jpg = media.thumbnail(path, Path(td) / "poster.jpg", at=1.0)
             if not jpg:
@@ -356,6 +442,7 @@ class MainWindow(QMainWindow):
             pix = QPixmap(str(jpg))
             if pix.isNull():
                 return
+            self._poster_pixmap = pix
             self.video.hide()
             self.drop.setText("")
             self.drop.setPixmap(pix.scaled(
@@ -374,15 +461,13 @@ class MainWindow(QMainWindow):
     def _on_position(self, pos: int) -> None:
         self.slider.setPlayhead(pos / 1000.0)
         if not self._syncing:
-            self.statusBar().showMessage(f"播放位置 {tc(pos / 1000.0)}")
-
-    def _on_duration(self, dur: int) -> None:
-        if dur > 0 and self.info and abs(self.info.duration - dur / 1000.0) > 0.5:
-            pass  # trust the ffprobe value; Qt rounds container durations
+            self.statusBar().showMessage(t("status.position", tc=tc(pos / 1000.0)))
 
     def _tick_playhead(self) -> None:
-        if self.player_ok and self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
-            self.statusBar().showMessage(f"播放位置 {tc(self.player.position() / 1000.0)}")
+        if (self.player_ok
+                and self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState):
+            self.statusBar().showMessage(
+                t("status.position", tc=tc(self.player.position() / 1000.0)))
 
     def _on_player_error(self, *args) -> None:
         self.player_ok = False
@@ -406,8 +491,9 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _spin_secs(spin: QTimeEdit) -> float:
-        t = spin.time()
-        return t.hour() * 3600 + t.minute() * 60 + t.second() + t.msec() / 1000.0
+        t_ = spin.time()
+        return (t_.hour() * 3600 + t_.minute() * 60 + t_.second()
+                + t_.msec() / 1000.0)
 
     def _on_range_changed(self, start: float, end: float) -> None:
         if self._syncing:
@@ -419,8 +505,10 @@ class MainWindow(QMainWindow):
         start, end = self.slider.range()
         if which == 0:
             self.slider.setRange(min(pos, end - 0.1), end)
+            self.statusBar().showMessage(t("status.start_set", tc=tc(pos)))
         else:
             self.slider.setRange(start, max(pos, start + 0.1))
+            self.statusBar().showMessage(t("status.end_set", tc=tc(pos)))
         if self.player_ok:
             self.player.setPosition(int(pos * 1000))
 
@@ -438,11 +526,12 @@ class MainWindow(QMainWindow):
         missing = downloader.missing_files(spec)
         if missing:
             names = "、".join(m.filename for m in missing[:2])
-            self.lbl_model_state.setText(f"⚠ 模型未下载，缺少 {len(missing)} 个文件（{names}…）\n"
-                                         "点菜单「工具 → 下载缺失模型」")
-        else:
             self.lbl_model_state.setText(
-                f"✓ {spec.key} 已就绪 · {downloader.human(sum(f.size for f in spec.files))}")
+                t("model.missing", count=len(missing), names=names))
+        else:
+            self.lbl_model_state.setText(t(
+                "model.ready", key=spec.key,
+                size=downloader.human(sum(f.size for f in spec.files))))
         if self.worker is None:
             self.btn_run.setEnabled(bool(self.video_path) and not missing)
 
@@ -462,17 +551,15 @@ class MainWindow(QMainWindow):
         from .. import paths
         lines = [f"{k}: {v}" for k, v in paths.describe_layout().items()]
         rt = downloader.runtime_status()
-        lines.insert(0, f"运行时: {'已就绪' if rt['ready'] else '未安装'}")
-        QMessageBox.information(self, "环境自检", "\n".join(lines))
+        lines.insert(0, t("cli.doctor.runtime") + ": "
+                     + (t("cli.status_ready") if rt["ready"] else t("cli.status_missing")))
+        QMessageBox.information(self, t("cli.doctor.title", version=__version__),
+                                "\n".join(lines))
 
     def about(self) -> None:
         QMessageBox.about(
-            self, "关于 asr-mm",
-            f"<b>asr-mm {__version__}</b><br><br>"
-            "视频指定时间段 → 中文语音转写<br>"
-            "本地离线运行，模型来自 FunASR（MIT）。<br><br>"
-            "<span style='color:#6b7280'>Ctrl+O 打开视频 · "
-            "双击结果行可编辑文字 · 点击结果行跳转播放位置</span>")
+            self, t("menu.about"),
+            t("dlg.about", version=__version__, hint=t("dlg.about_hint")))
 
     # ------------------------------------------------------------------ run
     def run_transcribe(self) -> None:
@@ -480,21 +567,23 @@ class MainWindow(QMainWindow):
             return
         key = self.cmb_model.currentData()
         if not downloader.is_model_ready(key):
-            QMessageBox.warning(self, "模型缺失",
-                                f"模型 {key} 尚未下载完成。\n"
-                                "请先执行「工具 → 下载缺失模型」。")
+            QMessageBox.warning(self, t("menu.about"),
+                                t("dlg.model_missing", key=key))
             return
         start, end = self._current_range()
         self.btn_run.setEnabled(False)
         self.progress.show()
-        self.statusBar().showMessage("正在识别…")
+        self.statusBar().showMessage(t("status.running"))
         job = Job(video=str(self.video_path), start=start, end=end, model=key,
                   preroll=self.spin_preroll.value(),
                   drop_short=self.chk_drop.isChecked(),
                   loudnorm=self.chk_loud.isChecked(),
                   maxseg=engine.DEFAULT_MAXSEG_MS)
         self.worker = TranscribeWorker(job, self)
-        self.worker.stage.connect(self.statusBar().showMessage)
+        self.worker.stage.connect(
+            lambda msg: self.statusBar().showMessage(
+                t("status.extract") if "抽取" in msg or "xtract" in msg.lower()
+                else t("status.running")))
         self.worker.finished_ok.connect(self._on_done)
         self.worker.failed.connect(self._on_failed)
         self.worker.start()
@@ -507,18 +596,23 @@ class MainWindow(QMainWindow):
         self._fill_table(result)
         for b in (self.btn_copy, self.btn_save, self.btn_clip):
             b.setEnabled(True)
-        speed = f"{1 / result.rtf:.0f}× 实时" if result.rtf else "—"
-        self.statusBar().showMessage(
-            f"完成：{len(result.segments)} 条片段，耗时 {result.elapsed:.1f}s / "
-            f"音频 {result.audio_seconds:.0f}s（{speed}）"
-            + (f"　|　{result.warning}" if result.warning else ""))
+        speed = f"{1 / result.rtf:.0f}×" if result.rtf else "—"
+        fmt = t("status.done", count=len(result.segments),
+                elapsed=f"{result.elapsed:.1f}", audio=f"{result.audio_seconds:.0f}",
+                speed=speed)
+        if result.warning:
+            fmt = t("status.done_note", count=len(result.segments),
+                    elapsed=f"{result.elapsed:.1f}",
+                    audio=f"{result.audio_seconds:.0f}", speed=speed,
+                    note=result.warning)
+        self.statusBar().showMessage(fmt)
 
     def _on_failed(self, msg: str) -> None:
         self.worker = None
         self.progress.hide()
         self.btn_run.setEnabled(True)
-        self.statusBar().showMessage("识别失败")
-        QMessageBox.critical(self, "识别失败", msg)
+        self.statusBar().showMessage(t("status.failed"))
+        QMessageBox.critical(self, t("dlg.transcribe_failed"), msg)
 
     def _fill_table(self, result: transcribe.Transcript) -> None:
         self.table.setRowCount(len(result.segments))
@@ -526,21 +620,18 @@ class MainWindow(QMainWindow):
             t0 = QTableWidgetItem(tc(seg.start))
             t1 = QTableWidgetItem(f"{seg.duration:.1f}s")
             t2 = QTableWidgetItem(seg.text)
-            t2.setToolTip("双击可编辑")
+            t2.setToolTip(t("row.tip_suspect") if seg.suspicious else t("row.tip"))
             if seg.suspicious:
                 t2.setBackground(Qt.GlobalColor.yellow)
-                t2.setToolTip("疑似噪音误识别（黄色底色），可双击编辑或删除整行")
             for col, item in ((0, t0), (1, t1), (2, t2)):
-                item.setFlags(item.flags() & ~Qt.ItemIsEditable if col < 2
-                              else item.flags())
+                if col < 2:
+                    item.setFlags(item.flags() & ~Qt.ItemIsEditable)
                 self.table.setItem(row, col, item)
         self.table.resizeRowsToContents()
 
     def _on_row_selected(self) -> None:
-        if not self.result or not self.table.currentRow() >= 0:
-            return
         row = self.table.currentRow()
-        if row < len(self.result.segments) and self.player_ok:
+        if self.result and 0 <= row < len(self.result.segments) and self.player_ok:
             self.player.setPosition(int(self.result.segments[row].start * 1000))
             self.player.play()
 
@@ -563,7 +654,7 @@ class MainWindow(QMainWindow):
         if not segs:
             return
         QApplication.clipboard().setText(render_txt(segs))
-        self.statusBar().showMessage("已复制全文到剪贴板")
+        self.statusBar().showMessage(t("status.copied"))
 
     def export(self) -> None:
         segs = self._current_segments()
@@ -573,7 +664,7 @@ class MainWindow(QMainWindow):
         start, end = self._current_range()
         stamp = f"{start.replace(':', '')}-{end.replace(':', '')}"
         path, _ = QFileDialog.getSaveFileName(
-            self, "导出", f"{base}_{stamp}.txt", TEXT_FILTER)
+            self, t("filedialog.export"), f"{base}_{stamp}.txt", t("filter.text"))
         if not path:
             return
         p = Path(path)
@@ -586,27 +677,26 @@ class MainWindow(QMainWindow):
             else:
                 p.write_text(render_txt(segs), encoding="utf-8")
         except OSError as exc:
-            QMessageBox.critical(self, "导出失败", str(exc))
+            QMessageBox.critical(self, t("dlg.export_failed"), str(exc))
             return
-        self.statusBar().showMessage(f"已导出 {p}")
+        self.statusBar().showMessage(t("status.exported", path=p))
 
     def export_clip(self) -> None:
-        if not self.video_path or not self.result:
+        if not self.video_path or not self.result or not self.result.segments:
             return
-        start, end = self.result.segments[0].start, self.result.segments[-1].end
-        if not self.result.segments:
-            return
+        start = self.result.segments[0].start
+        end = self.result.segments[-1].end
         path, _ = QFileDialog.getSaveFileName(
-            self, "导出片段视频", f"{self.video_path.stem}_clip.mp4",
-            "MP4 (*.mp4);;所有文件 (*.*)")
+            self, t("filedialog.clip"),
+            f"{self.video_path.stem}_clip.mp4", t("filter.mp4"))
         if not path:
             return
         try:
             media.clip(self.video_path, Path(path), start, end)
         except media.MediaError as exc:
-            QMessageBox.critical(self, "导出失败", str(exc))
+            QMessageBox.critical(self, t("dlg.export_failed"), str(exc))
             return
-        self.statusBar().showMessage(f"已导出片段 {path}")
+        self.statusBar().showMessage(t("status.exported_clip", path=path))
 
     # ------------------------------------------------------------- drag/drop
     def dragEnterEvent(self, ev: QDragEnterEvent) -> None:
@@ -628,13 +718,26 @@ class MainWindow(QMainWindow):
         super().closeEvent(ev)
 
 
-def main() -> int:
-    app = QApplication.instance() or QApplication(sys.argv)
+def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv if argv is None else argv)
+    lang = None
+    for i, a in enumerate(argv):
+        if a == "--lang" and i + 1 < len(argv):
+            lang = argv[i + 1]
+            break
+        if a.startswith("--lang="):
+            lang = a.split("=", 1)[1]
+            break
+    if lang:
+        set_language(lang)
+
+    app = QApplication.instance() or QApplication(argv[:1])
     app.setApplicationName("asr-mm")
     win = MainWindow()
     win.show()
-    if len(sys.argv) > 1 and Path(sys.argv[1]).exists():
-        win.load_video(Path(sys.argv[1]))
+    rest = [a for a in argv[1:] if a != "--lang" and a != lang]
+    if rest and Path(rest[0]).exists():
+        win.load_video(Path(rest[0]))
     return app.exec()
 
 

@@ -9,6 +9,14 @@ from PySide6.QtWidgets import (
 )
 
 from .. import catalog, downloader
+from ..i18n import t
+
+MODEL_LABEL_KEY = {"nano": "model.nano", "paraformer": "model.paraformer",
+                   "sensevoice": "model.sensevoice"}
+
+
+def label_for(key: str) -> str:
+    return t(MODEL_LABEL_KEY.get(key, "model.nano"))
 
 
 class _Fetch(QThread):
@@ -35,19 +43,19 @@ class _Fetch(QThread):
                     self.done.emit(key, "")
                     continue
                 total = sum(f.size for f in missing)
-                self.log.emit(f"{spec.label} — {downloader.human(total)}")
+                self.log.emit(f"{label_for(key)} — {downloader.human(total)}")
                 state = {"t": 0.0}
                 last_name = {"v": ""}
 
-                def cb(name: str, d: int, t: int, key=key) -> None:
+                def cb(name: str, d: int, tot: int, key=key) -> None:
                     now = time.time()
-                    if now - state["t"] < 0.1 and d < t:
+                    if now - state["t"] < 0.1 and d < tot:
                         return
                     state["t"] = now
                     if name != last_name["v"]:
                         last_name["v"] = name
                         self.log.emit(f"  {name}")
-                    self.progress.emit(name, d, t or total)
+                    self.progress.emit(name, d, tot or total)
 
                 downloader.ensure_model(key, progress=cb)
                 self.done.emit(key, "")
@@ -58,14 +66,11 @@ class _Fetch(QThread):
 class ModelDownloadDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("下载识别模型")
-        self.resize(560, 300)
+        self.resize(560, 320)
         self.thread: _Fetch | None = None
 
         lay = QVBoxLayout(self)
-        self.info = QLabel(
-            "模型体积较大（Nano 约 911 MB，Paraformer 约 228 MB），只需下载一次，"
-            "之后可离线使用。\n下载可随时中断，下次继续。")
+        self.info = QLabel()
         self.info.setWordWrap(True)
         lay.addWidget(self.info)
 
@@ -79,13 +84,13 @@ class ModelDownloadDialog(QDialog):
         lay.addWidget(self.bar)
 
         row = QHBoxLayout()
-        self.btn_all = QPushButton("下载全部")
+        self.btn_all = QPushButton()
         self.btn_all.clicked.connect(lambda: self.start(list(catalog.MODELS)))
-        self.btn_nano = QPushButton("仅 Nano")
+        self.btn_nano = QPushButton()
         self.btn_nano.clicked.connect(lambda: self.start(["nano"]))
-        self.btn_fast = QPushButton("仅 Paraformer")
+        self.btn_fast = QPushButton()
         self.btn_fast.clicked.connect(lambda: self.start(["paraformer"]))
-        self.btn_close = QPushButton("关闭")
+        self.btn_close = QPushButton()
         self.btn_close.clicked.connect(self.close)
         for b in (self.btn_all, self.btn_nano, self.btn_fast):
             row.addWidget(b)
@@ -93,16 +98,26 @@ class ModelDownloadDialog(QDialog):
         row.addWidget(self.btn_close)
         lay.addLayout(row)
 
+        self.retranslate()
         self._refresh()
+
+    def retranslate(self) -> None:
+        self.setWindowTitle(t("models.title"))
+        self.info.setText(t("models.intro"))
+        self.btn_all.setText(t("models.all"))
+        self.btn_nano.setText(t("models.only_nano"))
+        self.btn_fast.setText(t("models.only_fast"))
+        self.btn_close.setText(t("models.close"))
 
     def _refresh(self) -> None:
         rows = []
         for spec in catalog.MODELS.values():
             ready = not downloader.missing_files(spec)
             size = downloader.human(sum(f.size for f in spec.files))
-            mark = "✓ 已就绪" if ready else "○ 未下载"
-            rows.append(f"<b>{spec.key}</b> — {spec.label} · {size} · {mark}<br>"
-                        f"<span style='color:#6b7280'>&nbsp;&nbsp;{spec.note}</span>")
+            mark = (t("models.state_ready") if ready else t("models.state_missing"))
+            rows.append(f"<b>{spec.key}</b> — {label_for(spec.key)} · {size} · {mark}<br>"
+                        f"<span style='color:#6b7280'>&nbsp;&nbsp;"
+                        f"{t('model.' + spec.key + '.note')}</span>")
         self.list.setText("<br>".join(rows))
 
     def start(self, keys: list[str]) -> None:
@@ -121,13 +136,21 @@ class ModelDownloadDialog(QDialog):
         if not total:
             return
         self.bar.setValue(int(done / total * 100))
-        self.bar.setFormat(f"{name}  %p%  ({downloader.human(done)}/{downloader.human(total)})")
+        self.bar.setFormat(
+            f"{name}  %p%  ({downloader.human(done)}/{downloader.human(total)})")
 
     def _on_done(self, key: str, err: str) -> None:
         if err:
-            self.info.setText(f"✗ {key} 下载失败：{err}")
+            self.info.setText(t("models.failed", key=key, error=err))
         else:
             self._refresh()
+
+    def changeEvent(self, ev) -> None:
+        # Keep the dialog consistent if the main window changes language.
+        if ev.type() == ev.Type.LanguageChange:
+            self.retranslate()
+            self._refresh()
+        super().changeEvent(ev)
 
     def closeEvent(self, ev) -> None:
         if self.thread is not None:

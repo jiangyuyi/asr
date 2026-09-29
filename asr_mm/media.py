@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import paths
+from .i18n import t
 
 _DUR = re.compile(r"Duration:\s*(\d+):(\d{2}):(\d{2}(?:\.\d+)?)")
 _STREAM = re.compile(r"^\s*Stream #\d+:\d+.*?:\s*(Audio|Video):\s*([A-Za-z0-9_]+)(.*)$")
@@ -55,9 +56,7 @@ def ffmpeg_path() -> str:
         # imageio_ffmpeg is excluded from the frozen build on purpose (it would
         # duplicate the staged ffmpeg.exe), so reaching here means a broken
         # install rather than a missing dependency.
-        raise MediaError(
-            "找不到可用的 ffmpeg：程序内置的 ffmpeg/ffmpeg 缺失，PATH 中也没有。"
-            "请重新安装本程序。") from exc
+        raise MediaError(t("err.no_ffmpeg")) from exc
 
 
 def _run(args: list[str], timeout: int = 3600) -> subprocess.CompletedProcess:
@@ -69,15 +68,15 @@ def _run(args: list[str], timeout: int = 3600) -> subprocess.CompletedProcess:
 def probe(path: str | os.PathLike) -> MediaInfo:
     p = Path(path)
     if not p.exists():
-        raise MediaError(f"文件不存在: {p}")
+        raise MediaError(t("err.not_a_file", path=p))
     if p.is_dir():
-        raise MediaError(f"需要一个视频文件，不接受目录: {p}")
+        raise MediaError(t("err.is_dir", path=p))
     r = _run(["-i", str(p)])
     err = r.stderr.decode("utf-8", "replace")
     m = _DUR.search(err)
     if not m:
         tail = "\n".join(err.strip().splitlines()[-6:])
-        raise MediaError(f"无法解析媒体信息（可能不是 ffmpeg 支持的格式）:\n{tail}")
+        raise MediaError(t("err.unreadable", tail=tail))
     duration = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
     info = MediaInfo(path=p, duration=duration, has_audio=False, has_video=False)
     for line in err.splitlines():
@@ -100,7 +99,7 @@ def probe(path: str | os.PathLike) -> MediaInfo:
             token = ch.group(1).lower()
             info.channels = 1 if token == "mono" else 2 if token == "stereo" else int(token.split()[0])
     if not info.has_audio:
-        raise MediaError("该文件没有音频轨道，无法转写。")
+        raise MediaError(t("err.no_audio"))
     return info
 
 
@@ -119,7 +118,7 @@ def extract_audio(src: str | os.PathLike, dst: str | os.PathLike,
     end = max(start, end)
     duration = end - start
     if duration <= 0:
-        raise MediaError("时间区间为空。")
+        raise MediaError(t("err.empty_range"))
 
     args = ["-ss", f"{start:.3f}", "-i", str(src), "-t", f"{duration:.3f}"]
     if loudnorm:
@@ -130,7 +129,7 @@ def extract_audio(src: str | os.PathLike, dst: str | os.PathLike,
     if r.returncode != 0 or not dst.exists() or dst.stat().st_size <= 44:
         err = r.stderr.decode("utf-8", "replace")
         tail = "\n".join(err.strip().splitlines()[-8:])
-        raise MediaError(f"音频抽取失败:\n{tail}")
+        raise MediaError(t("err.extract_failed", tail=tail))
     return dst
 
 
@@ -150,7 +149,7 @@ def clip(src: str | os.PathLike, dst: str | os.PathLike,
     if r.returncode != 0:
         err = r.stderr.decode("utf-8", "replace")
         tail = "\n".join(err.strip().splitlines()[-8:])
-        raise MediaError(f"片段导出失败:\n{tail}")
+        raise MediaError(t("err.clip_failed", tail=tail))
     return dst
 
 
