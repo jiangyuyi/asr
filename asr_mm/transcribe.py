@@ -13,6 +13,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from . import catalog, engine, media
+from .i18n import t
 from .srt import Cue, format_ts
 
 # CJK and ASCII punctuation. Written with explicit escapes: embedding curly
@@ -49,7 +50,7 @@ def parse_timecode(value: str | float | int | None) -> float | None:
         return max(0.0, float(s))
     m = re.fullmatch(r"(?:(\d+):)?(\d{1,2}):(\d{1,2}(?:\.\d+)?)", s)
     if not m:
-        raise ValueError(f"无法解析时间码: {value!r}（用 00:03:20 / 200 / 3:20 这样的格式）")
+        raise ValueError(t("err.bad_timecode", value=value))
     h = int(m.group(1) or 0)
     return h * 3600 + int(m.group(2)) * 60 + float(m.group(3))
 
@@ -150,13 +151,12 @@ def transcribe(source: str | Path, *, start: str | float | None = None,
     if req_end - req_start < 0.05:
         from .srt import format_ts
         if raw_start >= duration or raw_end >= duration:
-            raise ValueError(
-                f"指定的时间区间超出了视频时长。视频总长 "
-                f"{format_ts(duration, comma=False)}，你给的是 "
-                f"{format_ts(raw_start, comma=False)} – {format_ts(raw_end, comma=False)}。")
-        raise ValueError(
-            f"时间区间过短或顺序颠倒（{format_ts(req_start, comma=False)} – "
-            f"{format_ts(req_end, comma=False)}）。请用 --start / --end 指定。")
+            raise ValueError(t("err.range_past_end", duration=format_ts(duration, comma=False),
+                               start=format_ts(raw_start, comma=False),
+                               end=format_ts(raw_end, comma=False)))
+        raise ValueError(t("err.range_short",
+                           start=format_ts(req_start, comma=False),
+                           end=format_ts(req_end, comma=False)))
 
     applied_start = max(0.0, req_start - max(0.0, preroll))
     applied_end = req_end
@@ -190,11 +190,10 @@ def transcribe(source: str | Path, *, start: str | float | None = None,
     warnings = [res.warning] if res.warning else []
     flagged = [s for s in kept if s.suspicious]
     if flagged and not drop_short:
-        preview = "、".join(f"{format_ts(s.start, comma=False)} “{s.text}”"
+        preview = ", ".join(f"{format_ts(s.start, comma=False)} “{s.text}”"
                             for s in flagged[:3])
-        warnings.append(
-            f"{len(flagged)} 个片段很短且字数极少，可能是噪音误识别（{preview}"
-            f"{' 等' if len(flagged) > 3 else ''}）。可用 --drop-short 过滤。")
+        warnings.append(t("warn.noisy_segments", count=len(flagged), preview=preview,
+                          more=" …" if len(flagged) > 3 else ""))
 
     return Transcript(
         source=str(info.path), source_duration=duration,

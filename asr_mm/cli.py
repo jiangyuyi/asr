@@ -7,14 +7,22 @@ import sys
 from pathlib import Path
 
 from . import __version__, catalog, downloader, engine, media, paths, transcribe
-from .srt import render_srt, render_txt
+from .i18n import available_languages, display_width, pad, set_language, t
+from .srt import format_ts, render_srt, render_txt
+
+RUNTIME_KEYS = {
+    "windows-x64-avx2": "runtime.windows_avx2",
+    "windows-x64": "runtime.windows",
+    "macos-arm64": "runtime.macos",
+    "linux-x64": "runtime.linux",
+}
 
 
 def _fix_console() -> None:
     """The ASR binaries always emit UTF-8; make the terminal agree.
 
-    Without this, Windows consoles using CP936 render every Chinese character as
-    mojibake even though the underlying data is correct.
+    Without this, Windows consoles using CP936/CP932 render every Chinese
+    character as mojibake even though the underlying data is correct.
     """
     for stream in (sys.stdout, sys.stderr):
         try:
@@ -27,93 +35,117 @@ def _progress(label: str):
     return downloader.progress_printer(f"  {label}")
 
 
+def _runtime_label(key: str | None) -> str:
+    if not key:
+        return t("runtime.unknown")
+    return t(RUNTIME_KEYS.get(key, "runtime.unknown"))
+
+
+def _model_label(spec: catalog.ModelSpec) -> str:
+    key = {"nano": "model.nano", "paraformer": "model.paraformer",
+           "sensevoice": "model.sensevoice"}.get(spec.key)
+    return t(key) if key else spec.label
+
+
 # --------------------------------------------------------------------- models
 
 def cmd_models(args: argparse.Namespace) -> int:
     if args.action == "list":
-        print(f"asr-mm {__version__} 可用模型：\n")
-        for spec in catalog.MODELS.values():
-            ready = downloader.is_model_ready(spec.key)
-            size = downloader.human(sum(f.size for f in spec.files))
-            mark = "✓ 已下载" if ready else "○ 未下载"
-            print(f"  {spec.key:11s} {spec.label:24s} {size:>9s}  {mark}")
-            print(f"  {'':11s} {spec.note}")
-        print(f"\n默认模型: {catalog.DEFAULT_MODEL}")
+        print(t("cli.models.title", version=__version__))
+        rows = [(_model_label(s), s, downloader.is_model_ready(s.key),
+                 downloader.human(sum(f.size for f in s.files)))
+                for s in catalog.MODELS.values()]
+        width = max((display_width(r[0]) for r in rows), default=10) + 2
+        for label, spec, ready, size in rows:
+            mark = (t("cli.models.state_ready") if ready
+                    else t("cli.models.state_missing"))
+            print(f"  {spec.key:11s} {pad(label, width)}"
+                  f"{size:>9s}  {mark}")
+            print(f"  {'':11s} {t('model.' + spec.key + '.note')}")
+        print(f"\n{t('cli.models.default', key=catalog.DEFAULT_MODEL)}")
         return 0
 
     if args.action == "status":
         for line in downloader.status_table():
-            print("  " + line)
+            print(line)
         return 0
 
     key = args.model or catalog.DEFAULT_MODEL
     try:
         spec = catalog.resolve_model(key)
     except KeyError:
-        print(f"未知模型: {key}（可用: {', '.join(catalog.MODELS)}）", file=sys.stderr)
+        print(t("err.unknown_model", key=key, list=", ".join(catalog.MODELS)),
+              file=sys.stderr)
         return 2
     missing = downloader.missing_files(spec)
     if not missing:
-        print(f"模型 {spec.key} 已就绪。")
+        print(t("cli.models.ready", key=spec.key))
         return 0
     total = sum(f.size for f in missing)
-    print(f"下载模型 {spec.key} — {downloader.human(total)}")
-    cb = _progress("下载")
-    downloader.ensure_model(spec.key, progress=cb)
+    print(t("cli.models.downloading", key=spec.key, size=downloader.human(total)))
+    downloader.ensure_model(spec.key, progress=_progress(t("cli.models.default", key=spec.key)[:12]))
     downloader.clear_progress_line()
-    print(f"完成 -> {paths.models_dir()}")
+    print(t("cli.models.done", path=paths.models_dir()))
     return 0
 
 
 def cmd_setup(args: argparse.Namespace) -> int:
-    print(f"asr-mm {__version__} 环境准备")
+    print(t("cli.setup.title", version=__version__))
     for k, v in paths.describe_layout().items():
         print(f"  {k:14s} {v}")
-    print("\n[1/2] 识别运行时")
+    print(f"\n{t('cli.setup.step_runtime')}")
     try:
-        dest = downloader.ensure_runtime(progress=_progress("下载"))
-        print(f"  已就绪 -> {dest}")
+        dest = downloader.ensure_runtime(progress=_progress("runtime"))
+        print(t("cli.setup.runtime_ready", path=dest))
     except Exception as exc:
-        print(f"  失败: {exc}", file=sys.stderr)
+        print(f"  ✗ {exc}", file=sys.stderr)
         return 1
-    print("\n[2/2] 模型")
+    print(f"\n{t('cli.setup.step_models')}")
     keys = [args.model] if args.model else list(catalog.MODELS)
     for k in keys:
         spec = catalog.resolve_model(k)
         missing = downloader.missing_files(spec)
         if not missing:
-            print(f"  {spec.key:11s} 已就绪")
+            print(t("cli.setup.model_ready", key=pad(spec.key, 11)))
             continue
         size = downloader.human(sum(f.size for f in missing))
-        print(f"  {spec.key:11s} 下载中 ({size})")
+        print(t("cli.setup.model_dl", key=pad(spec.key, 11), size=size))
         downloader.ensure_model(k, progress=_progress(f"  {k:11s}"))
         downloader.clear_progress_line()
-    print("\n准备完成。运行 `asr-mm doctor` 自检，或 `asr-mm transcribe 视频.mp4` 开始。")
+    print(t("cli.setup.finished"))
     return 0
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
-    print(f"asr-mm {__version__} 自检\n")
-    print("环境")
+    print(t("cli.doctor.title", version=__version__))
+    print(t("cli.doctor.env"))
     for k, v in paths.describe_layout().items():
         print(f"  {k:14s} {v}")
-    print("\n运行时")
+    print(f"\n{t('cli.doctor.runtime')}")
     rt = downloader.runtime_status()
-    print(f"  平台匹配       {'✓ ' + rt['label'] if rt['key'] else '✗ 不支持'}")
-    print(f"  已安装         {'✓' if rt['ready'] else '✗'}")
-    print("\n模型")
+    if rt["key"]:
+        print(t("cli.doctor.platform_ok", label=_runtime_label(rt["key"])))
+    else:
+        print(f"  ✗ {t('runtime.unknown')}")
+    print(t("cli.doctor.runtime_ok") if rt["ready"]
+          else t("cli.doctor.runtime_no"))
+    print(f"\n{t('cli.doctor.models')}")
     for spec in catalog.MODELS.values():
         missing = downloader.missing_files(spec)
-        print(f"  {spec.key:11s} {'✓ 已就绪' if not missing else '✗ 缺 ' + str(len(missing)) + ' 个文件'}")
-    print("\nffmpeg")
+        key = pad(spec.key, 11)
+        if not missing:
+            print(t("cli.doctor.model_ready", key=key))
+        else:
+            print(t("cli.doctor.model_missing", key=key, count=len(missing)))
+    print(f"\n{t('cli.doctor.ffmpeg')}")
     try:
         path = media.ffmpeg_path()
-        print(f"  路径           {path}")
+        print(t("cli.doctor.ffmpeg_path", path=path))
     except media.MediaError as exc:
-        print(f"  ✗ {exc}")
+        print(f"  ✗ {exc}", file=sys.stderr)
         return 1
     if args.video:
-        print("\n媒体探测")
+        print(f"\n{t('cli.doctor.media')}")
         try:
             print("  " + json.dumps(media.probe_json(args.video), ensure_ascii=False))
         except media.MediaError as exc:
@@ -152,7 +184,7 @@ def cmd_transcribe(args: argparse.Namespace) -> int:
             preroll=args.preroll, loudnorm=args.loudnorm,
             drop_short=args.drop_short, keep_audio=args.keep_audio)
     except (media.MediaError, engine.EngineError, ValueError, KeyError) as exc:
-        print(f"错误: {exc}", file=sys.stderr)
+        print(exc, file=sys.stderr)
         return 1
 
     if args.stdout:
@@ -169,16 +201,13 @@ def cmd_transcribe(args: argparse.Namespace) -> int:
     src = Path(tr.source)
     stem = args.name or f"{src.stem}_{_range_tag(tr)}"
     out_dir = Path(args.out_dir) if args.out_dir else src.parent / f"{src.stem}_transcript"
-    written = _write_outputs(tr, out_dir, stem, args.format, args.timestamps)
-
-    for p in written:
-        print(f"已保存 {p}")
+    for p in _write_outputs(tr, out_dir, stem, args.format, args.timestamps):
+        print(t("cli.saved", path=p))
     _summary(tr)
     return 0
 
 
 def _range_tag(tr: transcribe.Transcript) -> str:
-    from .srt import format_ts
     if tr.range_start == 0 and abs(tr.range_end - tr.source_duration) < 0.1:
         return "full"
 
@@ -197,98 +226,107 @@ def _range_tag(tr: transcribe.Transcript) -> str:
 
 def _summary(tr: transcribe.Transcript, to_stderr: bool = False) -> None:
     out = sys.stderr if to_stderr else sys.stdout
-    from .srt import format_ts
-    lines = [
-        "",
-        f"区间  {format_ts(tr.range_start, comma=False)} – {format_ts(tr.range_end, comma=False)}"
-        f"   (源时长 {format_ts(tr.source_duration, comma=False)})",
-        f"模型  {tr.model_label}   片段 {len(tr.segments)} 条"
-        f"   耗时 {tr.elapsed:.2f}s / 音频 {tr.audio_seconds:.1f}s"
-        f"   ({1 / tr.rtf:.0f}× 实时)" if tr.audio_seconds else "",
-    ]
-    for ln in lines:
-        if ln:
-            print(ln, file=out)
+    print("", file=out)
+    print(t("cli.summary.range", start=format_ts(tr.range_start, comma=False),
+            end=format_ts(tr.range_end, comma=False),
+            duration=format_ts(tr.source_duration, comma=False)), file=out)
+    if tr.audio_seconds:
+        print(t("cli.summary.model", model=tr.model_label, count=len(tr.segments),
+                elapsed=f"{tr.elapsed:.2f}", audio=f"{tr.audio_seconds:.1f}",
+                speed=t("cli.speed", speed=f"{1 / tr.rtf:.0f}")), file=out)
+    else:
+        print(t("cli.summary.model_noaudio", model=tr.model_label,
+                count=len(tr.segments), elapsed=f"{tr.elapsed:.2f}"), file=out)
     if tr.dropped:
-        print(f"已过滤 {len(tr.dropped)} 个疑似噪音片段", file=out)
+        print(t("cli.summary.dropped", count=len(tr.dropped)), file=out)
     if tr.warning:
-        print(f"提示: {tr.warning}", file=out)
+        print(t("cli.summary.note", text=tr.warning), file=out)
     print("", file=out)
 
 
 # ---------------------------------------------------------------------- parse
 
 def build_parser() -> argparse.ArgumentParser:
+    # Language is already set by main() before we get here; the parser renders
+    # its help text from the catalog, so resetting here would discard --lang.
     p = argparse.ArgumentParser(
         prog="asr-mm",
-        description="视频指定时间段 → 中文语音转写",
+        description=t("cli.desc"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""示例:
-  asr-mm setup                              首次使用：装运行时 + 下载模型
-  asr-mm transcribe v.mp4                   转写整段
-  asr-mm transcribe v.mp4 -s 00:03:20 -e 00:05:10
-  asr-mm transcribe v.mp4 -s 200 -e 310 --model paraformer --format srt
-  asr-mm doctor v.mp4                      环境自检
-""")
+        epilog=t("cli.epilog"))
     p.add_argument("--version", action="version", version=f"asr-mm {__version__}")
+    p.add_argument("--lang", choices=[c for c, _ in available_languages()],
+                   metavar="{zh,en,ja}",
+                   help=t("cli.lang.help"))
     sub = p.add_subparsers(dest="command", required=True)
 
-    t = sub.add_parser("transcribe", help="转写视频指定时间段")
-    t.add_argument("video", help="视频文件路径")
-    t.add_argument("-s", "--start", help="起始时间，如 00:03:20 / 3:20 / 200")
-    t.add_argument("-e", "--end", help="结束时间")
-    t.add_argument("-m", "--model", default=catalog.DEFAULT_MODEL,
-                   choices=list(catalog.MODELS), help=f"默认 {catalog.DEFAULT_MODEL}")
-    t.add_argument("-f", "--format", default="txt,srt",
-                   help="导出格式，逗号分隔: txt,srt,json（默认 txt,srt）")
-    t.add_argument("-o", "--out-dir", help="输出目录（默认 视频名_transcript/）")
-    t.add_argument("--name", help="输出文件名主干")
-    t.add_argument("--stdout", action="store_true", help="结果打到标准输出，不写文件")
-    t.add_argument("--output-format", default="txt", choices=["txt", "srt", "json"],
-                   help="配合 --stdout 使用的格式")
-    t.add_argument("--timestamps", action="store_true", help="txt 中带时间戳")
-    t.add_argument("--no-summary", action="store_true", help="不打印统计摘要")
-    t.add_argument("--maxseg", type=int, default=engine.DEFAULT_MAXSEG_MS,
-                   help=f"VAD 分段上限毫秒（默认 {engine.DEFAULT_MAXSEG_MS}）")
-    t.add_argument("--preroll", type=float, default=0.0,
-                   help="起点前多取几秒，避免切到半个字（默认 0）")
-    t.add_argument("--loudnorm", action="store_true", help="先做响度归一化")
-    t.add_argument("--drop-short", action="store_true",
-                   help="丢弃极短且字数极少的疑似噪音片段")
-    t.add_argument("--threads", type=int, help="CPU 线程数（默认自动）")
-    t.add_argument("--keep-audio", action="store_true", help="保留抽取的中间 wav")
-    t.set_defaults(func=cmd_transcribe)
+    tsub = sub.add_parser("transcribe", help=t("cli.transcribe.help"))
+    tsub.add_argument("video", help=t("cli.video.help"))
+    tsub.add_argument("-s", "--start", help=t("cli.start.help"))
+    tsub.add_argument("-e", "--end", help=t("cli.end.help"))
+    tsub.add_argument("-m", "--model", default=catalog.DEFAULT_MODEL,
+                      choices=list(catalog.MODELS), help=t("cli.model.help"))
+    tsub.add_argument("-f", "--format", default="txt,srt", help=t("cli.format.help"))
+    tsub.add_argument("-o", "--out-dir", help=t("cli.outdir.help"))
+    tsub.add_argument("--name", help=t("cli.name.help"))
+    tsub.add_argument("--stdout", action="store_true", help=t("cli.stdout.help"))
+    tsub.add_argument("--output-format", default="txt",
+                      choices=["txt", "srt", "json"], help=t("cli.output_format.help"))
+    tsub.add_argument("--timestamps", action="store_true", help=t("cli.timestamps.help"))
+    tsub.add_argument("--no-summary", action="store_true", help=t("cli.no_summary.help"))
+    tsub.add_argument("--maxseg", type=int, default=engine.DEFAULT_MAXSEG_MS,
+                      help=t("cli.maxseg.help", default=engine.DEFAULT_MAXSEG_MS))
+    tsub.add_argument("--preroll", type=float, default=0.0, help=t("cli.preroll.help"))
+    tsub.add_argument("--loudnorm", action="store_true", help=t("cli.loudnorm.help"))
+    tsub.add_argument("--drop-short", action="store_true", help=t("cli.drop_short.help"))
+    tsub.add_argument("--threads", type=int, help=t("cli.threads.help"))
+    tsub.add_argument("--keep-audio", action="store_true", help=t("cli.keep_audio.help"))
+    tsub.set_defaults(func=cmd_transcribe)
 
-    m = sub.add_parser("models", help="查看/下载模型")
+    m = sub.add_parser("models", help=t("cli.models.help"))
     m.add_argument("action", nargs="?", default="list",
                    choices=["list", "status", "download"])
     m.add_argument("model", nargs="?", choices=list(catalog.MODELS))
     m.set_defaults(func=cmd_models)
 
-    s = sub.add_parser("setup", help="安装运行时并下载模型")
+    s = sub.add_parser("setup", help=t("cli.setup.help"))
     s.add_argument("-m", "--model", choices=list(catalog.MODELS),
-                   help="只装指定模型（默认全部）")
+                   help=t("cli.model.help"))
     s.set_defaults(func=cmd_setup)
 
-    d = sub.add_parser("doctor", help="环境自检")
-    d.add_argument("video", nargs="?", help="顺便探测这个视频")
+    d = sub.add_parser("doctor", help=t("cli.doctor.help"))
+    d.add_argument("video", nargs="?", help=t("cli.video.help"))
     d.set_defaults(func=cmd_doctor)
     return p
 
 
 def main(argv: list[str] | None = None) -> int:
     _fix_console()
+    argv = list(sys.argv[1:] if argv is None else argv)
+
+    # --lang has to be honoured before the parser renders its help text, and
+    # it may appear on either side of the subcommand.
+    lang = None
+    for i, a in enumerate(argv):
+        if a == "--lang" and i + 1 < len(argv):
+            lang = argv[i + 1]
+            break
+        if a.startswith("--lang="):
+            lang = a.split("=", 1)[1]
+            break
+    set_language(lang)
+
     args = build_parser().parse_args(argv)
     if getattr(args, "format", None):
         args.format = [x.strip() for x in str(args.format).split(",") if x.strip()]
         bad = set(args.format) - {"txt", "srt", "json"}
         if bad:
-            print(f"未知输出格式: {', '.join(bad)}", file=sys.stderr)
+            print(t("cli.bad_format", names=", ".join(bad)), file=sys.stderr)
             return 2
     try:
         return args.func(args)
     except KeyboardInterrupt:
-        print("\n已取消", file=sys.stderr)
+        print("\n", file=sys.stderr)
         return 130
 
 

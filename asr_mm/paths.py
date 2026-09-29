@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import platform
+import shutil
 import sys
 from pathlib import Path
 
@@ -51,17 +52,124 @@ def home_root() -> Path:
 
 
 def runtime_dir() -> Path:
-    """Directory holding the llama-funasr-* executables."""
+    """Directory holding the llama-funasr-* executables.
+
+    Safe to point at a non-ASCII path: Windows launches the process through
+    CreateProcessW before the binary ever sees argv, so the Japanese-Chinese
+    characters survive. Only GGUF *model* files need the staging dance below.
+    """
     bundled = resource_root() / "runtime"
     if (bundled / _exe_marker()).exists() or any(bundled.glob("llama-funasr-*")):
         return bundled
     return home_root() / "runtime"
 
 
+def ascii_safe(path: str | os.PathLike) -> bool:
+    """True when every character in ``path`` is plain ASCII.
+
+    The GGUF loader in the llama.cpp runtime opens files with narrow ``fopen``,
+    so the bytes it receives from argv are interpreted in the system ANSI code
+    page. On a Japanese Windows (CP932) a path like ``C:\\Users\\日本語\\...``
+    reaches it corrupted and it reports "No such file or directory".
+    """
+    return all(ord(c) < 128 for c in str(path))
+
+
+def _writable_ascii_root() -> Path | None:
+    """First ASCII-only directory we can actually write to.
+
+    Candidates that share a volume with :func:`home_root` come first, because
+    staging then costs a hard link instead of a full copy of ~950 MB of weights.
+    Writability is probed rather than assumed: ``C:\\Users\\Public`` is ASCII and
+    world-writable on a localized Windows, so a Japanese display name in the
+    user's profile never reaches the path the GGUF loader sees.
+    """
+    if platform.system() != "Windows":
+        return None
+
+    def volume(p: Path) -> str:
+        drive = p.drive or os.path.splitdrive(str(p))[0]
+        return drive.lower()
+
+    home_vol = volume(home_root())
+    candidates: list[tuple[bool, Path]] = []   # (same_volume, path)
+
+    public = os.environ.get("PUBLIC")
+    if public:
+        candidates.append((volume(Path(public)) == home_vol,
+                           Path(public) / APP_NAME))
+    program_data = os.environ.get("ProgramData") or r"C:\ProgramData"
+    candidates.append((volume(Path(program_data)) == home_vol,
+                       Path(program_data) / APP_NAME))
+    # A same-volume fallback keeps hard links possible when the profile lives
+    # on a secondary drive.
+    if home_vol:
+        candidates.append((True, Path(home_vol + "\\") / APP_NAME))
+    sys_drive = (os.environ.get("SystemDrive") or "C:") + "\\"
+    candidates.append((volume(Path(sys_drive + "x")) == home_vol,
+                       Path(sys_drive) / APP_NAME))
+
+    # Stable sort: same-volume first, original order otherwise.
+    candidates.sort(key=lambda item: not item[0])
+    for _same_vol, cand in candidates:
+        if not ascii_safe(cand):
+            continue
+        try:
+            cand.mkdir(parents=True, exist_ok=True)
+            probe = cand / ".write-probe"
+            probe.write_text("ok", encoding="ascii")
+            probe.unlink()
+            return cand
+        except OSError:
+            continue
+    return None
+
+
+def _stage_models(source: Path, dest: Path) -> None:
+    """Mirror model files into ``dest`` using hard links (no extra disk).
+
+    A copy is the fallback when the two directories live on different volumes.
+    """
+    dest.mkdir(parents=True, exist_ok=True)
+    for item in source.glob("*.gguf"):
+        target = dest / item.name
+        if target.exists() and target.stat().st_size == item.stat().st_size:
+            continue
+        target.unlink(missing_ok=True)
+        try:
+            os.link(item, target)
+        except OSError:
+            shutil.copy2(item, target)
+
+
 def models_dir() -> Path:
-    d = home_root() / "models"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    """Where GGUF models live.
+
+    Normally ``<home>/models``. When that path contains non-ASCII characters on
+    Windows, the models are hard-linked into an ASCII directory instead and that
+    is what gets returned, so the engine can actually open them.
+    """
+    home = home_root() / "models"
+    if ascii_safe(home):
+        home.mkdir(parents=True, exist_ok=True)
+        return home
+    staging = _writable_ascii_root()
+    if staging is None:
+        # Nothing ASCII is writable; try the home anyway and let the engine
+        # report the failure rather than silently writing models nowhere.
+        home.mkdir(parents=True, exist_ok=True)
+        return home
+    staged = staging / "models"
+    if home.exists():
+        _stage_models(home, staged)
+    else:
+        staged.mkdir(parents=True, exist_ok=True)
+    return staged
+
+
+def models_staged() -> bool:
+    """True when the GGUF files are being served from an ASCII staging dir."""
+    return models_dir() != home_root() / "models"
 
 
 def cache_dir() -> Path:
@@ -90,6 +198,9 @@ def binary_suffix() -> str:
 
 
 def describe_layout() -> dict[str, str]:
+    home = home_root() / "models"
+    models = models_dir()
+    staged = models != home
     return {
         "platform": f"{platform.system()} {platform.machine()}",
         "python": sys.version.split()[0],
@@ -97,6 +208,6 @@ def describe_layout() -> dict[str, str]:
         "resource_root": str(resource_root()),
         "home_root": str(home_root()),
         "runtime_dir": str(runtime_dir()),
-        "models_dir": str(models_dir()),
-        "ffmpeg": str(ffmpeg_exe() or "(使用 PATH 中的 ffmpeg)"),
+        "models_dir": str(models) + ("  (ASCII 暂存)" if staged else ""),
+        "ffmpeg": str(ffmpeg_exe() or "(ffmpeg not found on PATH)"),
     }

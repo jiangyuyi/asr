@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import catalog, downloader, paths
+from .i18n import t
 from .srt import Cue, parse_srt
 
 DEFAULT_MAXSEG_MS = 10_000
@@ -78,18 +79,14 @@ def check_ready(key: str) -> catalog.ModelSpec:
     spec = catalog.resolve_model(key)
     rt = downloader.runtime_status()
     if not rt["ready"]:
-        raise EngineError(
-            f"未安装识别运行时（{rt['label']}）。请先运行： asr-mm setup"
-            f"\n  目标目录: {rt['dir']}")
+        raise EngineError(t("err.no_runtime", platform=rt["label"], dir=rt["dir"]))
     exe = executable_for(spec)
     if not exe.exists():
-        raise EngineError(f"缺少可执行文件: {exe}")
+        raise EngineError(t("err.missing_exe", path=exe))
     missing = downloader.missing_files(spec)
     if missing:
         names = ", ".join(m.filename for m in missing)
-        raise EngineError(
-            f"模型 {spec.key} 尚未下载完整，缺少: {names}"
-            f"\n请运行: asr-mm models download {spec.key}")
+        raise EngineError(t("err.model_incomplete", key=spec.key, names=names))
     return spec
 
 
@@ -99,7 +96,7 @@ def transcribe_wav(wav: str | Path, model: str = catalog.DEFAULT_MODEL, *,
                    audio_seconds: float = 0.0) -> EngineResult:
     wav = Path(wav)
     if not wav.exists():
-        raise EngineError(f"音频文件不存在: {wav}")
+        raise EngineError(t("err.wav_missing", path=wav))
     spec = check_ready(model)
     cmd = build_command(spec, wav, vad_maxseg_ms=vad_maxseg_ms, threads=threads)
 
@@ -107,9 +104,9 @@ def transcribe_wav(wav: str | Path, model: str = catalog.DEFAULT_MODEL, *,
     try:
         p = subprocess.run(cmd, capture_output=True, timeout=7200)
     except FileNotFoundError as exc:
-        raise EngineError(f"无法启动识别引擎: {cmd[0]}") from exc
+        raise EngineError(t("err.engine_start", path=cmd[0])) from exc
     except subprocess.TimeoutExpired as exc:
-        raise EngineError("识别超时（超过 2 小时）。") from exc
+        raise EngineError(t("err.engine_timeout")) from exc
     elapsed = time.time() - t0
 
     out = p.stdout.decode("utf-8", "replace")
@@ -117,15 +114,14 @@ def transcribe_wav(wav: str | Path, model: str = catalog.DEFAULT_MODEL, *,
 
     if p.returncode != 0:
         tail = "\n".join(err.strip().splitlines()[-10:])
-        raise EngineError(f"识别引擎返回 {p.returncode}:\n{tail}")
+        raise EngineError(t("err.engine_returned", code=p.returncode, tail=tail))
     if not out.strip():
-        raise EngineError(
-            "识别引擎没有输出任何内容。音频可能不含人声，或采样率/声道异常。")
+        raise EngineError(t("err.engine_empty"))
 
     cues = parse_srt(out)
     warning = ""
     if not cues:
-        warning = "VAD 未在该区间检测到有效语音（可能是纯静音或纯环境音）。"
+        warning = t("err.no_speech")
     return EngineResult(
         cues=cues, raw_srt=out, seconds=elapsed, model=spec.key,
         model_label=spec.label, audio_seconds=audio_seconds, stderr=err,
