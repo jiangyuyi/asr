@@ -1,0 +1,124 @@
+name: release
+
+# Produces the distributable bundles for Windows and macOS and attaches them to
+# a GitHub release.
+#
+# The repo intentionally ships no weights: models are downloaded on first use,
+# so a build only needs the ~10 MB engine runtime plus the static ffmpeg.
+#
+#   push a v* tag  -> build + publish that tag's release
+#   manual dispatch -> build only, no release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to attach the build to (blank = build only)"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: win
+            label: windows-x64
+          - os: macos-latest     # arm64
+            target: mac
+            label: macos-arm64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ".[dev]" pyinstaller
+
+      - name: Unit tests
+        run: python -m pytest -q
+
+      - name: Stage payload (engine runtime + ffmpeg)
+        run: python packaging/prepare_payload.py --target ${{ matrix.target }}
+
+      - name: Build bundles
+        run: python -m PyInstaller packaging/asr-mm.spec --noconfirm --clean
+
+      - name: Package archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          VERSION="$(git describe --tags --always 2>/dev/null || echo dev)"
+          for name in asr-mm asr-mm-gui; do
+            if command -v zip >/dev/null 2>&1; then
+              zip -rq "release/${name}-${VERSION}-${{ matrix.label }}.zip" "dist/${name}"
+            else
+              tar -czf "release/${name}-${VERSION}-${{ matrix.label }}.tar.gz" -C dist "${name}"
+            fi
+          done
+          ls -lh release/
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: asr-mm-${{ matrix.label }}
+          path: release/*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.tag != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          name: ${{ inputs.tag || github.ref_name }}
+          generate_release_notes: true
+          body: |
+            ## asr-mm ${{ inputs.tag || github.ref_name }}
+
+            视频指定时间段 → 中文语音转写。全程本地离线，不上传任何音频。
+
+            | 平台 | 文件 |
+            |---|---|
+            | Windows x64 | `asr-mm-<version>-windows-x64.zip`（`asr-mm.exe` 命令行 / `asr-mm-gui.exe` 图形界面） |
+            | macOS arm64 | `asr-mm-<version>-macos-arm64.zip`（`.app` 图形界面 / 命令行） |
+
+            ### 首次使用
+
+            1. 解压后运行 `asr-mm.exe`（Windows）或 `asr-mm-gui`（macOS）
+            2. 运行 `asr-mm setup` 安装识别引擎并下载模型
+               - **Nano**（推荐，911 MB）标点完整、中文准确率最高
+               - **Paraformer**（228 MB）最快，无标点
+               - **SenseVoice**（244 MB）唯一支持显卡加速
+            3. 之后可完全离线使用
+
+            模型不会打进安装包，在首次运行时下载并缓存到用户目录。
+
+            ### 许可
+
+            代码 MIT。识别引擎与模型来自 [modelscope/FunASR](https://github.com/modelscope/FunASR)（MIT）。
+          files: release/*
+          fail_on_unmatched_files: true

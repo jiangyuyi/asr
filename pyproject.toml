@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "asr-mm"
+version = "0.1.0"
+description = "视频指定时间段 → 中文语音转写"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "imageio-ffmpeg>=0.4.9",
+]
+
+[project.optional-dependencies]
+gui = ["PySide6>=6.5"]
+dev = ["PySide6>=6.5", "pytest>=7"]
+
+[project.scripts]
+asr-mm = "asr_mm.launcher:main"
+asr-mm-gui = "asr_mm.launcher_gui:main"
+
+[tool.setuptools]
+packages = ["asr_mm", "asr_mm.gui"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
