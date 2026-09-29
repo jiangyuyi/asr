@@ -40,6 +40,7 @@ FunASR llama.cpp 运行时（`packaging/prepare_payload.py --target win` 会下�
 |---|---|
 | `../packaging/prepare_payload.py` | 准备引擎运行时与 ffmpeg（按目标平台） |
 | `../packaging/make_archives.py` | 打包 release 归档 |
+| `run_gui.py` | 启动 `dist/asr-mm-gui/` 里的图形界面（附带产物完整性检查） |
 | `package_local.sh` | 本地出一份 Windows 归档 |
 | `check_archive.sh` | 解压归档并运行，确认产物可用 |
 

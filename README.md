@@ -81,6 +81,30 @@ python -m asr_mm.gui            # 图形界面
 python -m asr_mm transcribe v.mp4 -s 00:03:20 -e 00:05:10
 ```
 
+### 自己构建
+
+```bash
+pip install pyinstaller imageio-ffmpeg
+python packaging/prepare_payload.py --target win    # 或 mac / linux
+python -m PyInstaller packaging/asr-mm.spec --noconfirm --workpath .pyinstaller-cache
+```
+
+> **成品在 `dist/` 里。**
+> `dist/asr-mm/asr-mm.exe`（命令行）和 `dist/asr-mm-gui/asr-mm-gui.exe`（图形界面）
+> 才是可运行的程序，下载 release 也是解压这个结构。
+>
+> **不要运行构建缓存里的 exe。** PyInstaller 默认把中间产物写进 `build/`，
+> 那里只有 exe 本体和 `.pkg` 归档，`_internal/`（含 `python311.dll`、ffmpeg、
+> 识别引擎）要到 COLLECT 阶段才会写进 `dist/`。直接双击 `build/` 里的 exe 会报：
+>
+> ```
+> Failed to load Python DLL
+> '...build\asr-mm\_internal\python311.dll'. LoadLibrary: 找不到指定的模块。
+> ```
+>
+> 上面命令用 `--workpath .pyinstaller-cache` 就是为了避免这个歧义。
+> 若你用的是默认 `build/`，构建结束后可以直接删掉它。
+
 ---
 
 ## 三档模型
