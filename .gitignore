@@ -2,6 +2,7 @@
 dist/
 build/
 release/
+.pyinstaller-cache/
 *.egg-info/
 .eggs/
 
