@@ -99,6 +99,15 @@ ZH: dict[str, str] = {
         "本地离线运行，模型来自 FunASR（MIT）。<br><br>"
         "<span style='color:#6b7280'>{hint}</span>"),
     "dlg.about_hint": "Ctrl+O 打开视频 · 双击结果行可编辑文字 · 点击结果行跳转播放位置",
+    # ---- loading
+    "load.window": "正在打开视频",
+    "load.title": "正在读取视频，请稍候…",
+    "load.cancel": "取消",
+    "load.probing": "正在读取 {name} 的信息…",
+    "load.decoding": "正在解码 {name} 的预览画面…",
+    "load.done": "完成",
+    "load.cancelled": "已取消打开 {name}",
+    "load.failed": "无法打开 {name}",
     # ---- model download dialog
     "models.title": "下载识别模型",
     "models.intro": (
@@ -306,6 +315,14 @@ EN: dict[str, str] = {
         "Runs fully offline; models come from FunASR (MIT).<br><br>"
         "<span style='color:#6b7280'>{hint}</span>"),
     "dlg.about_hint": "Ctrl+O open · double-click a row to edit · click a row to jump the playhead",
+    "load.window": "Opening video",
+    "load.title": "Reading the video, please wait…",
+    "load.cancel": "Cancel",
+    "load.probing": "Reading information from {name}…",
+    "load.decoding": "Decoding a preview frame from {name}…",
+    "load.done": "Done",
+    "load.cancelled": "Opening {name} was cancelled",
+    "load.failed": "Could not open {name}",
     "models.title": "Download recognition models",
     "models.intro": (
         "Models are large (Nano ≈ 911 MB, Paraformer ≈ 228 MB) and only need "
@@ -508,6 +525,14 @@ JA: dict[str, str] = {
         "動画の任意の時間区間を中国語テキストに変換します。<br>"        "すべてローカルで動作します。モデルは FunASR（MIT）。<br><br>"
         "<span style='color:#6b7280'>{hint}</span>"),
     "dlg.about_hint": "Ctrl+O で開く · 行をダブルクリックで編集 · 行をクリックで再生位置へジャンプ",
+    "load.window": "動画を開いています",
+    "load.title": "動画を読み込んでいます。しばらくお待ちください…",
+    "load.cancel": "キャンセル",
+    "load.probing": "{name} の情報を読み込んでいます…",
+    "load.decoding": "{name} のプレビューをデコードしています…",
+    "load.done": "完了",
+    "load.cancelled": "{name} を開く操作はキャンセルされました",
+    "load.failed": "{name} を開けませんでした",
     "models.title": "認識モデルのダウンロード",
     "models.intro": (
         "モデルは大きく（Nano 約 911 MB、Paraformer 約 228 MB）、初回のみダウンロードが"

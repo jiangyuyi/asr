@@ -71,6 +71,18 @@ tools/enc_stress.txt
 tools/enc_isolate.txt
 tools/enc_fix.txt
 tools/gui_i18n.txt
+tools/load_profile.txt
+tools/load_profile_qt.txt
+tools/load_progress_test.txt
+tools/load_dialog_test.txt
+tools/load_dialog_shot.py
+tools/big_sample.mp4
+tools/日本語/
+tools/load_profile.txt
+tools/load_profile_qt.txt
+tools/load_progress_test.txt
+tools/load_dialog_test.txt
+tools/load_dialog_shot.py
 
 # ---- os ----------------------------------------------------------------------
 .DS_Store
