@@ -59,12 +59,9 @@ jobs:
         run: python -m PyInstaller packaging/asr-mm.spec --noconfirm --clean
 
       - name: Package archives
-        run: |
-          set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
-          [ "$VERSION" = "$GITHUB_REF_NAME" ] && VERSION=dev
-          python packaging/make_archives.py --version "$VERSION" --label "${{ matrix.label }}"
-          ls -lh release/
+        # Deliberately plain Python: the default shell on windows-latest is
+        # PowerShell, where bash syntax such as `[ ... ] && x=y` is a parse error.
+        run: python packaging/make_archives.py --label ${{ matrix.label }}
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
