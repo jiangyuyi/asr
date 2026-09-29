@@ -42,15 +42,20 @@ def archive(bundle: str, out_dir: Path, version: str, label: str) -> Path:
     print(f"packing {bundle} -> {out.name} …", flush=True)
 
     files = [p for p in src.rglob("*") if p.is_file()]
+    raw = sum(p.stat().st_size for p in files)
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
         for p in files:
-            # Executable bits are not stored by zipfile on its own; carry them
-            # over explicitly or the binaries lose +x on extraction.
+            # Executable bits are not stored by zipfile's own write(); carry
+            # them over explicitly or the binaries lose +x on extraction.
             info = zipfile.ZipInfo.from_file(p, str(Path(bundle) / p.relative_to(src)))
             mode = p.stat().st_mode
             info.external_attr = ((mode & 0o7777) | 0o100000) << 16
             if is_macos:
                 info.create_system = 3        # Unix, so the mode above applies
+            # writestr() reads compress_type off the ZipInfo, and that defaults
+            # to ZIP_STORED — it does not inherit the archive's setting. Without
+            # this the bundle ships uncompressed (115 MB -> 308 MB).
+            info.compress_type = zipfile.ZIP_DEFLATED
             z.writestr(info, p.read_bytes())
 
         if is_macos:
@@ -63,11 +68,20 @@ def archive(bundle: str, out_dir: Path, version: str, label: str) -> Path:
                 executable = name.endswith(".command")
                 extra.create_system = 3        # Unix, so the mode below applies
                 extra.external_attr = (0o100755 if executable else 0o100644) << 16
+                extra.compress_type = zipfile.ZIP_DEFLATED
                 z.writestr(extra, body.encode("utf-8"))
             print(f"  + {len(extras)} macOS helper files "
                   f"({', '.join(extras)})")
 
-    print(f"  {len(files)} files, {out.stat().st_size / 1_048_576:.1f} MB")
+    size_mb = out.stat().st_size / 1_048_576
+    ratio = out.stat().st_size / raw if raw else 1.0
+    print(f"  {len(files)} files, {raw / 1_048_576:.0f} MB raw -> "
+          f"{size_mb:.1f} MB packed ({ratio:.0%})")
+    # A bundle that barely compresses means deflate silently stopped applying.
+    if size_mb > raw / 1_048_576 * 0.75:
+        raise SystemExit(
+            f"压缩似乎未生效：{raw / 1_048_576:.0f} MB 原始内容只压到 "
+            f"{size_mb:.1f} MB。检查 writestr() 是否设置了 compress_type。")
     return out
 
 
