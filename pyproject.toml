@@ -4,12 +4,16 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "asr-mm"
-version = "1.2.1"
+version = "1.3.0"
 description = "视频指定时间段 → 中文语音转写"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
     "imageio-ffmpeg>=0.4.9",
+    # A frozen build has no CA bundle unless one is carried, and a corporate
+    # TLS-inspecting proxy presents a root that only lives in the OS store.
+    "certifi>=2024.2.2",
+    "truststore>=0.9.0; python_version >= '3.10'",
 ]
 
 [project.optional-dependencies]

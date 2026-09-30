@@ -304,6 +304,9 @@ class MainWindow(QMainWindow):
         self.act_open_models = QAction(self)
         self.act_open_models.triggered.connect(self.open_models_dir)
         self.menu_tools.addAction(self.act_open_models)
+        self.act_net = QAction(self)
+        self.act_net.triggered.connect(self.network_settings)
+        self.menu_tools.addAction(self.act_net)
         self.act_doctor = QAction(self)
         self.act_doctor.triggered.connect(self.doctor)
         self.menu_tools.addAction(self.act_doctor)
@@ -356,6 +359,7 @@ class MainWindow(QMainWindow):
         self.menu_tools.setTitle(t("menu.tools"))
         self.act_download.setText(t("menu.download_models"))
         self.act_open_models.setText(t("menu.open_models"))
+        self.act_net.setText(t("net.title"))
         self.act_doctor.setText(t("menu.doctor"))
         self.menu_help.setTitle(t("menu.help"))
         self.act_about.setText(t("menu.about"))
@@ -660,6 +664,12 @@ class MainWindow(QMainWindow):
         from PySide6.QtGui import QDesktopServices
         from .. import paths
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(paths.models_dir())))
+
+    def network_settings(self) -> None:
+        from .net_dialog import NetworkSettingsDialog
+        dlg = NetworkSettingsDialog(self)
+        dlg.exec()
+        self._refresh_model_state()
 
     def doctor(self) -> None:
         from .. import paths

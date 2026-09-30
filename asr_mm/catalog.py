@@ -11,6 +11,10 @@ RUNTIME_VERSION = "v1.4.16"
 RUNTIME_BASE = f"https://github.com/modelscope/FunASR/releases/download/{RUNTIME_VERSION}"
 
 HF = "https://huggingface.co/FunAudioLLM"
+# ModelScope mirrors the same GGUF repos and is reachable from mainland China
+# without a VPN. Used as a fallback when HuggingFace is blocked, slow, or
+# intercepted by a TLS-inspecting proxy.
+MS = "https://modelscope.cn/models"
 
 
 @dataclass(frozen=True)
@@ -18,6 +22,15 @@ class ModelFile:
     url: str
     filename: str
     size: int  # bytes
+    mirror_url: str = ""   # same bytes, alternate host
+
+    def sources(self, mirror: str = "auto") -> list[str]:
+        """URLs to try, in order, honouring the user's mirror preference."""
+        if mirror == "huggingface":
+            return [self.url]
+        if mirror == "modelscope" and self.mirror_url:
+            return [self.mirror_url]
+        return [self.url, self.mirror_url] if self.mirror_url else [self.url]
 
 
 @dataclass(frozen=True)
@@ -33,7 +46,8 @@ class ModelSpec:
 
 
 VAD_FILE = ModelFile(f"{HF}/fsmn-vad-GGUF/resolve/main/fsmn-vad.gguf",
-                     "fsmn-vad.gguf", 1_720_512)
+                     "fsmn-vad.gguf", 1_720_512,
+                     mirror_url=f"{MS}/FunAudioLLM/fsmn-vad-GGUF/resolve/master/fsmn-vad.gguf")
 
 NANO = ModelSpec(
     key="nano",
@@ -44,9 +58,11 @@ NANO = ModelSpec(
     aliases=("qwen3", "fun-asr-nano"),
     files=(
         ModelFile(f"{HF}/Fun-ASR-Nano-GGUF/resolve/main/funasr-encoder-f16.gguf",
-                  "funasr-encoder-f16.gguf", 469_331_008),
+                  "funasr-encoder-f16.gguf", 469_331_008,
+                  mirror_url=f"{MS}/FunAudioLLM/Fun-ASR-Nano-GGUF/resolve/master/funasr-encoder-f16.gguf"),
         ModelFile(f"{HF}/Fun-ASR-Nano-GGUF/resolve/main/qwen3-0.6b-q4km.gguf",
-                  "qwen3-0.6b-q4km.gguf", 484_219_776),
+                  "qwen3-0.6b-q4km.gguf", 484_219_776,
+                  mirror_url=f"{MS}/FunAudioLLM/Fun-ASR-Nano-GGUF/resolve/master/qwen3-0.6b-q4km.gguf"),
         VAD_FILE,
     ),
 )
@@ -59,7 +75,8 @@ PARAFORMER = ModelSpec(
     aliases=("fast", "pf"),
     files=(
         ModelFile(f"{HF}/Paraformer-GGUF/resolve/main/paraformer-q8.gguf",
-                  "paraformer-q8.gguf", 236_929_024),
+                  "paraformer-q8.gguf", 236_929_024,
+                  mirror_url=f"{MS}/FunAudioLLM/Paraformer-GGUF/resolve/master/paraformer-q8.gguf"),
         VAD_FILE,
     ),
 )
@@ -72,7 +89,8 @@ SENSEVOICE = ModelSpec(
     aliases=("sv", "balanced"),
     files=(
         ModelFile(f"{HF}/SenseVoiceSmall-GGUF/resolve/main/sensevoice-small-q8.gguf",
-                  "sensevoice-small-q8.gguf", 254_208_320),
+                  "sensevoice-small-q8.gguf", 254_208_320,
+                  mirror_url=f"{MS}/FunAudioLLM/SenseVoiceSmall-GGUF/resolve/master/sensevoice-small-q8.gguf"),
         VAD_FILE,
     ),
 )
