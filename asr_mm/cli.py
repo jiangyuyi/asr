@@ -89,6 +89,50 @@ def cmd_models(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_net(args: argparse.Namespace) -> int:
+    """Test the download sources and report who issues their certificates."""
+    from . import net
+    cfg = downloader.net_config({
+        "mirror": args.mirror,
+        "ca_bundle": args.ca_bundle,
+        "insecure": args.insecure,
+    })
+    if cfg.ca_error:
+        print(cfg.ca_error, file=sys.stderr)
+        return 1
+    if cfg.insecure and not args.yes_insecure:
+        print(t("net.insecure_warn"), file=sys.stderr)
+        return 2
+
+    print(t("cli.net.title", version=__version__))
+    print(f"  {t('net.trust', source=net.inject_os_trust())}")
+    if cfg.ca_bundle:
+        print(f"  {t('net.ca_ok', path=cfg.ca_bundle)}")
+    print()
+
+    results = net.diagnose(cfg)
+    if not results:
+        print(t("net.diag_empty"))
+        return 1
+    failed = 0
+    for r in results:
+        mark = "OK  " if r.ok else "FAIL"
+        print(f"[{mark}] {r.label}  ({r.host})")
+        if not r.ok:
+            failed += 1
+            print(f"       {r.reason}")
+        if r.issuer:
+            print(f"       {t('net.issuer')}: {r.issuer}")
+        if r.verdict:
+            print(f"       {t('net.verdict')}: {r.verdict}")
+        print()
+    if failed:
+        print(t("cli.net.some_fail", count=failed))
+    else:
+        print(t("cli.net.all_ok"))
+    return 1 if failed else 0
+
+
 def cmd_setup(args: argparse.Namespace) -> int:
     print(t("cli.setup.title", version=__version__))
     for k, v in paths.describe_layout().items():
@@ -297,6 +341,15 @@ def build_parser() -> argparse.ArgumentParser:
     d = sub.add_parser("doctor", help=t("cli.doctor.help"))
     d.add_argument("video", nargs="?", help=t("cli.video.help"))
     d.set_defaults(func=cmd_doctor)
+
+    n = sub.add_parser("net-check", help=t("cli.net.help"))
+    n.add_argument("--mirror", choices=["auto", "huggingface", "modelscope"],
+                   help=t("net.mirror"))
+    n.add_argument("--ca-bundle", help=t("net.ca_bundle"))
+    n.add_argument("--insecure", action="store_true", help=t("net.insecure"))
+    n.add_argument("--yes-insecure", action="store_true",
+                   help=argparse.SUPPRESS)
+    n.set_defaults(func=cmd_net)
     return p
 
 

@@ -180,6 +180,34 @@ python -m PyInstaller packaging/asr-mm.spec --noconfirm --workpath .pyinstaller-
 这类结果在表格里标黄，JSON 里 `suspicious: true`。
 勾选「过滤疑似噪音片段」或 `--drop-short` 才会真正丢弃。
 
+**网络设置（下载模型失败时先看这里）**
+
+模型从 Hugging Face 或 ModelScope 下载。两个源都指向同一批文件（已核对体积一致），
+默认先用 Hugging Face，失败自动切到 ModelScope。
+
+若下载时报 `CERTIFICATE_VERIFY_FAILED`：
+
+1. 打开「工具 → 网络设置」，点「**测试连接**」
+2. 诊断会显示证书的**签发者**。如果看到的是公司设备的名字
+   （Zscaler / Palo Alto / Fortinet /  naked 社用网关等），
+   说明网络在解密 TLS——浏览器能访问是因为系统钥匙串里有那张根证书。
+3. 三种应对：
+   - 下载该网关的根证书，在「公司根证书文件」里指定它
+   - 改用「仅 ModelScope」下载源
+   - 实在拿不到根证书，才勾选「跳过 TLS 校验」
+
+命令行同样可以诊断：
+
+```bash
+asr-mm net-check                    # 逐个源测试并显示签发者
+asr-mm net-check --mirror modelscope
+```
+
+> **为什么打包后需要这些？** macOS 的 Python 从框架目录读 `cert.pem`，
+> PyInstaller 不会把那个文件带进包里，结果是 CA 存储为空、**任何** HTTPS 都失败。
+> 因此本程序固定打包 `certifi` 的根证书，并用 `truststore` 读取系统钥匙串——
+> 后者正是公司根证书所在的地方。
+
 **降噪不是重点，VAD 才是。** 比起给整段带噪音频做降噪，先用 VAD 切掉静音和纯环境音
 收益更大。所以默认不做降噪，只提供可选的响度归一化。
 
@@ -224,16 +252,19 @@ python -m PyInstaller packaging/asr-mm.spec --noconfirm --workpath .pyinstaller-
 
 ```
 asr_mm/
-  catalog.py     模型与运行时清单（URL、体积、SHA256）
+  catalog.py     模型与运行时清单（URL、体积、SHA256、镜像）
+  net.py         HTTPS：镜像回退、证书信任、错误分类、网络诊断
+  settings.py    持久化偏好（语言、下载源、根证书）
   paths.py       只读资源目录 vs 用户可写目录
   downloader.py  断点续传 + 校验 + 原子替换
   media.py       ffmpeg 封装：探测、抽音频、抽帧、切片
   srt.py         SRT 解析与渲染
   engine.py      调 llama.cpp 二进制
   transcribe.py  编排：区间校验 → 抽音频 → 识别 → 回算时间戳
+  i18n.py        zh/en/ja 词条与语言检测
   cli.py         命令行
   gui/           PySide6 界面
-packaging/       PyInstaller 打包
+packaging/       PyInstaller 打包、macOS 签名公证、发布归档
 ```
 
 **不打包 Python ML 框架。** 识别交给 FunASR 官方预编译的 llama.cpp 二进制

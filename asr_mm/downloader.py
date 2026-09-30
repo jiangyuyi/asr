@@ -2,26 +2,24 @@
 
 Resumable, checksummed, atomic. Files land in the user-writable home root so a
 frozen macOS app bundle never has to hold a gigabyte of weights.
+
+Transport lives in :mod:`asr_mm.net`: mirror fallback, a trust store that works
+inside a frozen bundle, and an error taxonomy the UI can turn into advice.
 """
 from __future__ import annotations
 
 import hashlib
-import os
 import shutil
+import ssl
 import tarfile
-import urllib.error
-import urllib.request
 import zipfile
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable
 
-from . import catalog, paths
+from . import catalog, net, paths, settings as settings_mod
 from .i18n import t
 
 Progress = Callable[[str, int, int], None]  # (filename, done_bytes, total_bytes)
-
-_UA = "asr-mm/0.1 (+https://github.com/)"
 
 
 def _sha256(path: Path, chunk: int = 1 << 20) -> str:
@@ -32,79 +30,53 @@ def _sha256(path: Path, chunk: int = 1 << 20) -> str:
     return h.hexdigest()
 
 
-def _open(url: str, offset: int = 0, timeout: int = 60):
-    req = urllib.request.Request(url, headers={"User-Agent": _UA})
-    if offset:
-        req.add_header("Range", f"bytes={offset}-")
-    return urllib.request.urlopen(req, timeout=timeout)
+def net_config(overrides: dict | None = None) -> net.NetConfigLoaded:
+    """Saved settings, optionally with per-call overrides."""
+    s = settings_mod.Settings.load()
+    data = s.to_dict()
+    if overrides:
+        data.update({k: v for k, v in overrides.items() if v not in (None, "")})
+    return net.NetConfigLoaded.load(
+        ca_bundle=data.get("ca_bundle", ""),
+        insecure=bool(data.get("insecure")),
+        mirror=data.get("mirror", "auto"),
+    )
 
 
-def download(url: str, dst: Path, *, expect_size: int = 0,
+def ssl_context(cfg: net.NetConfigLoaded | None = None) -> ssl.SSLContext:
+    return net.build_context(cfg or net_config())
+
+
+def download(urls: list[str] | str, dst: Path, *, expect_size: int = 0,
              expect_sha256: str = "", progress: Progress | None = None,
-             retries: int = 3) -> Path:
-    """Fetch ``url`` to ``dst``, resuming a partial ``.part`` file if present."""
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    if dst.exists():
-        if expect_sha256 and _sha256(dst) != expect_sha256:
-            dst.unlink()
-        elif _size_ok(dst.stat().st_size, expect_size):
-            return dst
+             retries: int = 2, cfg: net.NetConfigLoaded | None = None) -> Path:
+    """Fetch to ``dst``, trying each URL in turn and resuming where possible."""
+    if isinstance(urls, str):
+        urls = [urls]
+    return net.fetch(urls, dst, ssl_context(cfg), expect_size=expect_size,
+                     expect_sha256=expect_sha256, on_progress=progress,
+                     retries=retries)
 
-    part = dst.with_suffix(dst.suffix + ".part")
-    last_err: Exception | None = None
-    for attempt in range(1, retries + 1):
-        offset = part.stat().st_size if part.exists() else 0
-        try:
-            with _open(url, offset) as r:
-                total = expect_size or int(r.headers.get("Content-Length") or 0)
-                if offset and total:
-                    total += offset
-                if offset and r.status == 200:
-                    # Server ignored our Range header — restart from scratch.
-                    part.unlink(missing_ok=True)
-                    offset = 0
-                    total = int(r.headers.get("Content-Length") or 0)
-                mode = "ab" if offset else "wb"
-                done = offset
-                if progress:
-                    progress(dst.name, done, total)
-                with part.open(mode) as f:
-                    while True:
-                        block = r.read(1 << 20)
-                        if not block:
-                            break
-                        f.write(block)
-                        done += len(block)
-                        if progress:
-                            progress(dst.name, done, total)
-            break
-        except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as exc:
-            last_err = exc
-            if attempt == retries:
-                raise
-    else:  # pragma: no cover
-        raise RuntimeError(t("err.download_failed", url=url)) from last_err
 
-    if expect_sha256:
-        got = _sha256(part)
-        if got != expect_sha256.lower():
-            part.unlink(missing_ok=True)
-            raise RuntimeError(t("err.sha_mismatch", name=dst.name,
-                                       expected=expect_sha256, actual=got))
-    part.replace(dst)
-    return dst
+def explain(exc: Exception) -> str:
+    """Turn a network failure into something the user can act on."""
+    if isinstance(exc, net.NetConfigError):
+        return str(exc)
+    if isinstance(exc, net.DownloadError):
+        lines = [t("dlg.dl_failed", name=exc.filename)]
+        for host, why in exc.attempts:
+            lines.append(f"  · {host}: {why}")
+        if any("证书" in why for _, why in exc.attempts):
+            lines.append("")
+            lines.append(t("dlg.dl_ssl_help"))
+        else:
+            lines.append("")
+            lines.append(t("dlg.dl_mirror_help"))
+        return "\n".join(lines)
+    return str(exc)
 
 
 # --------------------------------------------------------------------------- models
-
-# Pinned sizes are exact today; the tolerance keeps a future re-upload of the
-# same file from looking "missing" and triggering an endless re-download loop.
-SIZE_TOLERANCE = 0.95
-
-
-def _size_ok(actual: int, expect: int) -> bool:
-    return not expect or actual >= expect * SIZE_TOLERANCE
-
 
 def model_path(filename: str) -> Path:
     return paths.models_dir() / filename
@@ -130,12 +102,15 @@ def total_size(spec: catalog.ModelSpec) -> int:
     return sum(f.size for f in spec.files)
 
 
-def ensure_model(key: str, progress: Progress | None = None) -> catalog.ModelSpec:
+def ensure_model(key: str, progress: Progress | None = None,
+                 cfg: net.NetConfigLoaded | None = None) -> catalog.ModelSpec:
     """Download whatever parts of ``key`` are absent. Idempotent."""
     spec = catalog.resolve_model(key)
+    cfg = cfg or net_config()
     for f in missing_files(spec):
-        download(f.url, model_path(f.filename), expect_size=f.size,
-                 progress=progress)
+        net.fetch(f.sources(cfg.mirror), model_path(f.filename),
+                  net.build_context(cfg), expect_size=f.size,
+                  on_progress=progress)
     return spec
 
 
@@ -152,9 +127,9 @@ def detect_runtime_key() -> str:
         return "macos-arm64"
     if system == "Linux" and machine in ("x86_64", "amd64"):
         return "linux-x64"
-    raise RuntimeError(t("err.unsupported_platform",
-                           platform=f"{system}/{machine}",
-                           dir=paths.runtime_dir()))
+    raise RuntimeError(
+        t("err.unsupported_platform", platform=f"{system}/{machine}",
+          dir=paths.runtime_dir()))
 
 
 def runtime_status() -> dict:
@@ -165,13 +140,13 @@ def runtime_status() -> dict:
         pass
     d = paths.runtime_dir()
     spec = catalog.RUNTIMES.get(key or "", None)
-    present = bool(spec) and all(
-        (d / m).exists() for m in spec.members)
+    present = bool(spec) and all((d / m).exists() for m in spec.members)
     return {"key": key, "dir": d, "ready": present,
-            "label": spec.label if spec else "未知平台"}
+            "label": spec.label if spec else t("runtime.unknown")}
 
 
-def ensure_runtime(progress: Progress | None = None) -> Path:
+def ensure_runtime(progress: Progress | None = None,
+                   cfg: net.NetConfigLoaded | None = None) -> Path:
     key = detect_runtime_key()
     spec = catalog.RUNTIMES[key]
     dest = paths.runtime_dir()
@@ -179,7 +154,10 @@ def ensure_runtime(progress: Progress | None = None) -> Path:
         return dest
     dest.mkdir(parents=True, exist_ok=True)
     archive = paths.cache_dir() / spec.archive
-    download(spec.url, archive, expect_sha256=spec.sha256, progress=progress)
+    # The runtime only ships on GitHub, but a corporate proxy may block it; the
+    # user's mirror preference still applies if a mirror is known for it.
+    net.fetch([spec.url], archive, net.build_context(cfg or net_config()),
+              expect_sha256=spec.sha256, on_progress=progress)
     _extract(archive, dest)
     missing = [m for m in spec.members if not (dest / m).exists()]
     if missing:
@@ -195,8 +173,8 @@ def _extract(archive: Path, dest: Path) -> None:
         with zipfile.ZipFile(archive) as z:
             _safe_zip_extract(z, tmp)
     elif archive.name.endswith((".tar.gz", ".tgz")):
-        with tarfile.open(archive, "r:gz") as t:
-            _safe_tar_extract(t, tmp)
+        with tarfile.open(archive, "r:gz") as t_:
+            _safe_tar_extract(t_, tmp)
     else:
         raise RuntimeError(t("err.bad_archive", name=archive.name))
     # Archives may or may not have a top-level directory.
@@ -220,15 +198,22 @@ def _safe_zip_extract(z: zipfile.ZipFile, dest: Path) -> None:
     z.extractall(dest)
 
 
-def _safe_tar_extract(t: tarfile.TarFile, dest: Path) -> None:
+def _safe_tar_extract(tf: tarfile.TarFile, dest: Path) -> None:
     root = dest.resolve()
-    for member in t.getmembers():
+    for member in tf.getmembers():
         target = (dest / member.name).resolve()
         if not str(target).startswith(str(root)):
             raise RuntimeError(t("err.zip_escape", name=member.name))
         if member.issym() or member.islnk():
             raise RuntimeError(t("err.tar_link", name=member.name))
-    t.extractall(dest, filter="data")
+    tf.extractall(dest, filter="data")
+
+
+SIZE_TOLERANCE = 0.95
+
+
+def _size_ok(actual: int, expect: int) -> bool:
+    return not expect or actual >= expect * SIZE_TOLERANCE
 
 
 def human(n: float) -> str:

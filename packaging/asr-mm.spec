@@ -78,7 +78,14 @@ def build(script: str, name: str, console: bool, argv_emulation: bool):
         pathex=[str(ROOT)],
         binaries=[],
         datas=payload_datas(),
-        hiddenimports=["PySide6.QtMultimedia", "PySide6.QtMultimediaWidgets"],
+        hiddenimports=[
+            "PySide6.QtMultimedia", "PySide6.QtMultimediaWidgets",
+            # HTTPS needs a CA bundle that survives freezing. Without certifi
+            # a macOS build can end up with an empty trust store and reject
+            # every certificate; truststore teaches OpenSSL to read the OS
+            # keychain, which is where a corporate root certificate lives.
+            "certifi", "truststore",
+        ],
         hookspath=[],
         hooksconfig={},
         runtime_hooks=[],

@@ -84,6 +84,8 @@ class ModelDownloadDialog(QDialog):
         lay.addWidget(self.bar)
 
         row = QHBoxLayout()
+        self._row = row
+        self._net_btn_shown = False
         self.btn_all = QPushButton()
         self.btn_all.clicked.connect(lambda: self.start(list(catalog.MODELS)))
         self.btn_nano = QPushButton()
@@ -141,12 +143,27 @@ class ModelDownloadDialog(QDialog):
 
     def _on_done(self, key: str, err: str) -> None:
         if err:
-            self.info.setText(t("models.failed", key=key, error=err))
+            from .. import downloader
+            # Turn a raw ssl/urllib traceback into something the user can act
+            # on, and point them at the network settings.
+            detail = downloader.explain(Exception(err)) if err else ""
+            self.info.setText(t("models.failed", key=key, error=detail))
+            self.bar.setValue(0)
+            if not self._net_btn_shown:
+                self._net_btn_shown = True
+                self.btn_net = QPushButton(t("net.title"))
+                self.btn_net.clicked.connect(self._open_net_settings)
+                self._row.addWidget(self.btn_net)
         else:
             self._refresh()
 
+    def _open_net_settings(self) -> None:
+        from .net_dialog import NetworkSettingsDialog
+        dlg = NetworkSettingsDialog(self)
+        dlg.exec()
+        self._refresh()
+
     def changeEvent(self, ev) -> None:
-        # Keep the dialog consistent if the main window changes language.
         if ev.type() == ev.Type.LanguageChange:
             self.retranslate()
             self._refresh()

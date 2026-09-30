@@ -672,6 +672,15 @@ JA: dict[str, str] = {
 
 CATALOGS: dict[str, dict[str, str]] = {"zh": ZH, "en": EN, "ja": JA}
 
+# Network-settings vocabulary lives in its own module to keep this file
+# navigable; merge it in before anything can look a key up.
+from . import net_i18n as _net_i18n  # noqa: E402
+
+for _code, _net in (("zh", _net_i18n.ZH), ("en", _net_i18n.EN),
+                    ("ja", _net_i18n.JA)):
+    CATALOGS[_code].update(_net)
+del _code, _net
+
 _ALIASES: dict[str, str] = {}
 for _code, (_native, _english, _aliases) in CATALOG_META.items():
     _ALIASES[_code] = _code
