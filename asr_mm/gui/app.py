@@ -877,7 +877,6 @@ class MainWindow(QMainWindow):
         return self.tr_worker is not None
 
     def run_translate(self) -> None:
-        from .. import translate as mt
         if self.tr_worker is not None:
             return
         segs = self._current_segments()
