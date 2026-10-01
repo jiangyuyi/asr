@@ -111,3 +111,8 @@ build_gui_smoke/
 build_assets/
 build_onnx/
 build_frozen/
+build_verify_home/
+build_verify_out/
+build_verify_out2/
+build_dl/
+tools/final_150.txt
