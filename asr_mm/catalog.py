@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .i18n import t
+
 RUNTIME_VERSION = "v1.4.16"
 RUNTIME_BASE = f"https://github.com/modelscope/FunASR/releases/download/{RUNTIME_VERSION}"
 
@@ -43,6 +45,28 @@ class ModelSpec:
     # Nano needs an explicit --enc pointing at the audio encoder
     encoder_file: str | None = None
     aliases: tuple[str, ...] = field(default_factory=tuple)
+    # Languages this model can actually transcribe, measured against SAPI
+    # speech in zh/ja/en. Paraformer returns nothing for Japanese and drops all
+    # spacing on English, so it is listed as Chinese-only.
+    languages: tuple[str, ...] = ("zh",)
+    # Languages it handles but with a visible quality cost.
+    degraded: tuple[str, ...] = ()
+
+    def supports(self, code: str) -> bool:
+        if not code or code == "auto":
+            return True
+        return code in self.languages
+
+    @staticmethod
+    def lang_name(code: str) -> str:
+        """Localised display name; falls back to the raw code."""
+        return t("lang." + code) if code and code != "auto" else t("lang.auto")
+
+    def warning_for(self, code: str) -> str:
+        if not code or code == "auto" or self.supports(code):
+            return ""
+        return t("warn.model_no_lang", model=self.key, lang=self.lang_name(code))
+
 
 
 VAD_FILE = ModelFile(f"{HF}/fsmn-vad-GGUF/resolve/main/fsmn-vad.gguf",
@@ -54,8 +78,9 @@ NANO = ModelSpec(
     label="Nano（质量档·推荐）",
     binary="llama-funasr-cli",
     encoder_file="funasr-encoder-f16.gguf",
-    note="标点最完整、中文准确率最高；约 10× 实时。",
+    note="标点最完整；中/英/日均可，约 10× 实时。",
     aliases=("qwen3", "fun-asr-nano"),
+    languages=("zh", "en", "ja"),
     files=(
         ModelFile(f"{HF}/Fun-ASR-Nano-GGUF/resolve/main/funasr-encoder-f16.gguf",
                   "funasr-encoder-f16.gguf", 469_331_008,
@@ -69,10 +94,11 @@ NANO = ModelSpec(
 
 PARAFORMER = ModelSpec(
     key="paraformer",
-    label="Paraformer（快速档）",
+    label="Paraformer（快速档·仅中文）",
     binary="llama-funasr-paraformer",
-    note="约 27× 实时，体积最小；输出不带标点。仅 CPU。",
+    note="约 27× 实时，体积最小；仅中文，且输出不带标点。仅 CPU。",
     aliases=("fast", "pf"),
+    languages=("zh",),
     files=(
         ModelFile(f"{HF}/Paraformer-GGUF/resolve/main/paraformer-q8.gguf",
                   "paraformer-q8.gguf", 236_929_024,
@@ -85,8 +111,10 @@ SENSEVOICE = ModelSpec(
     key="sensevoice",
     label="SenseVoice（均衡档）",
     binary="llama-funasr-sensevoice",
-    note="唯一支持 CUDA/Vulkan 加速；短片段（<1.5s）易输出空内容。",
+    note="唯一支持 CUDA/Vulkan 加速；中/英可用，日文分词间距有瑕疵。",
     aliases=("sv", "balanced"),
+    languages=("zh", "en", "ja"),
+    degraded=("ja",),
     files=(
         ModelFile(f"{HF}/SenseVoiceSmall-GGUF/resolve/main/sensevoice-small-q8.gguf",
                   "sensevoice-small-q8.gguf", 254_208_320,

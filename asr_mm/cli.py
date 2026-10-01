@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from . import __version__, catalog, downloader, engine, media, paths, transcribe
-from .i18n import available_languages, display_width, pad, set_language, t
+from .i18n import available_languages, display_width, get_language, pad, set_language, t
 from .srt import format_ts, render_srt, render_txt
 
 RUNTIME_KEYS = {
@@ -202,25 +202,23 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 def _write_outputs(tr: transcribe.Transcript, out_dir: Path, stem: str,
                    formats: list[str], timestamps: bool) -> list[Path]:
-    out_dir.mkdir(parents=True, exist_ok=True)
-    written: list[Path] = []
-    if "txt" in formats:
-        p = out_dir / f"{stem}.txt"
-        p.write_text(render_txt(tr.segments, timestamps), encoding="utf-8")
-        written.append(p)
-    if "srt" in formats:
-        p = out_dir / f"{stem}.srt"
-        p.write_text(render_srt(tr.segments), encoding="utf-8")
-        written.append(p)
-    if "json" in formats:
-        p = out_dir / f"{stem}.json"
-        p.write_text(json.dumps(tr.to_dict(), ensure_ascii=False, indent=2),
-                     encoding="utf-8")
-        written.append(p)
-    return written
+    from . import export
+    return export.write_all(out_dir, stem, tr.segments, formats,
+                            timestamps=timestamps, lang=get_language(),
+                            json_payload=tr.to_dict())
+
+
+def _model_lang_warning(model: str, content_lang: str) -> str:
+    from . import catalog
+    try:
+        spec = catalog.resolve_model(model)
+    except KeyError:
+        return ""
+    return spec.warning_for(content_lang)
 
 
 def cmd_transcribe(args: argparse.Namespace) -> int:
+    warning = _model_lang_warning(args.model, args.content_lang)
     try:
         tr = transcribe.transcribe(
             args.video, start=args.start, end=args.end, model=args.model,
@@ -230,6 +228,8 @@ def cmd_transcribe(args: argparse.Namespace) -> int:
     except (media.MediaError, engine.EngineError, ValueError, KeyError) as exc:
         print(exc, file=sys.stderr)
         return 1
+    if warning:
+        print(f"⚠ {warning}", file=sys.stderr)
 
     if args.stdout:
         if args.output_format == "json":
@@ -311,6 +311,9 @@ def build_parser() -> argparse.ArgumentParser:
     tsub.add_argument("-m", "--model", default=catalog.DEFAULT_MODEL,
                       choices=list(catalog.MODELS), help=t("cli.model.help"))
     tsub.add_argument("-f", "--format", default="txt,srt", help=t("cli.format.help"))
+    tsub.add_argument("--content-lang", default="auto",
+                      choices=["auto", "zh", "en", "ja"],
+                      help=t("cli.content_lang.help"))
     tsub.add_argument("-o", "--out-dir", help=t("cli.outdir.help"))
     tsub.add_argument("--name", help=t("cli.name.help"))
     tsub.add_argument("--stdout", action="store_true", help=t("cli.stdout.help"))
@@ -371,8 +374,9 @@ def main(argv: list[str] | None = None) -> int:
 
     args = build_parser().parse_args(argv)
     if getattr(args, "format", None):
+        from . import export
         args.format = [x.strip() for x in str(args.format).split(",") if x.strip()]
-        bad = set(args.format) - {"txt", "srt", "json"}
+        bad = set(args.format) - set(export.FORMATS)
         if bad:
             print(t("cli.bad_format", names=", ".join(bad)), file=sys.stderr)
             return 2

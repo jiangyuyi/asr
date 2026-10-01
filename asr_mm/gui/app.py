@@ -132,6 +132,17 @@ class MainWindow(QMainWindow):
             max(0, [c for c, _ in available_languages()].index(get_language())))
         self.cmb_lang.currentIndexChanged.connect(self._on_lang_changed)
         top.addWidget(self.cmb_lang)
+        self.lbl_content_lang = QLabel()
+        top.addWidget(self.lbl_content_lang)
+        self.cmb_content = QComboBox()
+        for code, key in (("auto", "lang.auto"), ("zh", "lang.zh"),
+                          ("en", "lang.en"), ("ja", "lang.ja")):
+            self.cmb_content.addItem(t(key), code)
+        self.cmb_content.setCurrentIndex(0)
+        self.cmb_content.setToolTip(t("cli.content_lang.help"))
+        self.cmb_content.currentIndexChanged.connect(
+            lambda _: self._refresh_model_state())
+        top.addWidget(self.cmb_content)
         root.addLayout(top)
 
         # ---- middle: preview | controls
@@ -325,6 +336,12 @@ class MainWindow(QMainWindow):
         self.btn_open.setText(t("toolbar.open"))
         self.lbl_model_caption.setText(t("toolbar.model"))
         self.lbl_lang_caption.setText(t("toolbar.language"))
+        self.lbl_content_lang.setText(t("lang.caption"))
+        self.cmb_content.setItemText(0, t("lang.auto"))
+        self.cmb_content.setItemText(1, t("lang.zh"))
+        self.cmb_content.setItemText(2, t("lang.en"))
+        self.cmb_content.setItemText(3, t("lang.ja"))
+        self.cmb_content.setToolTip(t("cli.content_lang.help"))
         self.cmb_model.setItemText(0, t("model.nano"))
         self.cmb_model.setItemText(1, t("model.paraformer"))
         self.cmb_model.setItemText(2, t("model.sensevoice"))
@@ -642,14 +659,25 @@ class MainWindow(QMainWindow):
         except KeyError:
             return
         missing = downloader.missing_files(spec)
+        lines = []
         if missing:
             names = "、".join(m.filename for m in missing[:2])
-            self.lbl_model_state.setText(
-                t("model.missing", count=len(missing), names=names))
+            lines.append(t("model.missing", count=len(missing), names=names))
         else:
-            self.lbl_model_state.setText(t(
-                "model.ready", key=spec.key,
-                size=downloader.human(sum(f.size for f in spec.files))))
+            lines.append(t("model.ready", key=spec.key,
+                           size=downloader.human(sum(f.size for f in spec.files))))
+
+        content = self.cmb_content.currentData() if hasattr(self, "cmb_content") else "auto"
+        unsupported = spec.warning_for(content)
+        if unsupported:
+            lines.append("⚠ " + unsupported)
+        elif content in spec.degraded:
+            lines.append("⚠ " + t("lang.degraded", model=spec.key,
+                                  lang=t("lang." + content)))
+        self.lbl_model_state.setText("\n".join(lines))
+        self.lbl_model_state.setStyleSheet(
+            "color:#b45309; font-size:12px;" if unsupported
+            else "color:#6b7280; font-size:12px;")
         if self.worker is None:
             self.btn_run.setEnabled(bool(self.video_path) and not missing)
 
@@ -694,6 +722,10 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, t("menu.about"),
                                 t("dlg.model_missing", key=key))
             return
+        content = self.cmb_content.currentData()
+        warning = catalog.resolve_model(key).warning_for(content)
+        if warning:
+            QMessageBox.warning(self, t("run"), warning)
         start, end = self._current_range()
         self.btn_run.setEnabled(False)
         self.progress.show()
@@ -781,6 +813,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(t("status.copied"))
 
     def export(self) -> None:
+        from .. import export
         segs = self._current_segments()
         if not segs:
             return
@@ -788,19 +821,16 @@ class MainWindow(QMainWindow):
         start, end = self._current_range()
         stamp = f"{start.replace(':', '')}-{end.replace(':', '')}"
         path, _ = QFileDialog.getSaveFileName(
-            self, t("filedialog.export"), f"{base}_{stamp}.txt", t("filter.text"))
+            self, t("filedialog.export"), f"{base}_{stamp}.xlsx",
+            export.export_dialog_filters())
         if not path:
             return
         p = Path(path)
+        fmt = export.guess_format(p.name)
         try:
-            if p.suffix.lower() == ".srt":
-                p.write_text(render_srt(segs), encoding="utf-8")
-            elif p.suffix.lower() == ".json":
-                p.write_text(json.dumps(self.result.to_dict(), ensure_ascii=False,
-                                        indent=2), encoding="utf-8")
-            else:
-                p.write_text(render_txt(segs), encoding="utf-8")
-        except OSError as exc:
+            export.write(p, segs, fmt, lang=get_language(),
+                         json_payload=self.result.to_dict() if self.result else {})
+        except (OSError, export.ExportError) as exc:
             QMessageBox.critical(self, t("dlg.export_failed"), str(exc))
             return
         self.statusBar().showMessage(t("status.exported", path=p))

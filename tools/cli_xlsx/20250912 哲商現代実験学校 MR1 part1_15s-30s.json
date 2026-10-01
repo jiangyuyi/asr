@@ -1,0 +1,50 @@
+{
+  "source": "D:\\Work\\asr_mm\\20250912 哲商現代実験学校 MR1 part1.avi",
+  "source_duration": 66.13,
+  "range": {
+    "start": 15.0,
+    "end": 30.0,
+    "start_tc": "00:00:15.000",
+    "end_tc": "00:00:30.000"
+  },
+  "applied_range": {
+    "start": 15.0,
+    "end": 30.0
+  },
+  "model": "nano",
+  "model_label": "Nano（质量档·推荐）",
+  "elapsed_seconds": 1.69,
+  "audio_seconds": 15.0,
+  "rtf": 0.1123,
+  "text": "大家互相交流啊。不是怎么是一大面的。小土漂。",
+  "segments": [
+    {
+      "start": 15.3,
+      "end": 25.3,
+      "text": "大家互相交流啊。不是怎么是一大面的。",
+      "suspicious": false,
+      "start_tc": "00:00:15.300",
+      "end_tc": "00:00:25.300",
+      "duration": 10.0
+    },
+    {
+      "start": 27.35,
+      "end": 29.98,
+      "text": "小土漂。",
+      "suspicious": false,
+      "start_tc": "00:00:27.350",
+      "end_tc": "00:00:29.980",
+      "duration": 2.63
+    }
+  ],
+  "dropped_segments": [],
+  "warning": "",
+  "info": {
+    "size_mb": 50.34,
+    "audio_codec": "pcm_s16le",
+    "sample_rate": 22050,
+    "channels": 1,
+    "has_video": true,
+    "vad_maxseg_ms": 10000
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "zh": {
+    "nano": "今天天气很好，我们去公园散步吧。",
+    "paraformer": "今天天气很好我们去公园散步吧",
+    "sensevoice": "今天天气很好，我们去公园散步吧。"
+  },
+  "ja": {
+    "nano": "今日はいい天気ですね。公園に行きましょう。",
+    "paraformer": "",
+    "sensevoice": "今日は いい 天気 で、すね 公園 に 行き ましょう。"
+  },
+  "en": {
+    "nano": "The weather is nice today. Let's go to the park.",
+    "paraformer": "theweatherisnicetodaylet'sgotothepark",
+    "sensevoice": "The weather is nice today, Let's go to the park."
+  }
+}
