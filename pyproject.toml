@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "asr-mm"
-version = "1.4.0"
+version = "1.5.0"
 description = "视频指定时间段 → 语音转写"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -17,6 +17,11 @@ dependencies = [
     # Excel export. Pure Python, so it lands in a Windows/macOS bundle without
     # a per-platform compiled dependency.
     "openpyxl>=3.1",
+    # 翻译（中文 → 英文 / 日文）。CTranslate2 是编译扩展，wheel 只有
+    # macOS arm64 约 1.3 MB / Windows 约 19 MB，比把 PyTorch 塞进安装包
+    # 小两个数量级；sentencepiece 负责切词，模型本身按需下载。
+    "ctranslate2>=4.5",
+    "sentencepiece>=0.2",
 ]
 
 [project.optional-dependencies]

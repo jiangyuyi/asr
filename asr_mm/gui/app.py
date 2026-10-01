@@ -28,10 +28,15 @@ from ..i18n import available_languages, get_language, set_language, t
 from ..srt import format_ts, render_srt, render_txt
 from .loader import LoadProgressDialog, LoadWorker, PROBE_SHARE
 from .range_slider import RangeSlider
-from .worker import Job, TranscribeWorker
+from .worker import Job, TranscribeWorker, TranslateWorker
 
 VIDEO_SUFFIXES = ("*.mp4 *.mkv *.avi *.mov *.flv *.wmv *.m4v *.ts *.webm "
                   "*.mpg *.mpeg *.rmvb *.3gp")
+
+# Result table columns. Translations are columns of their own rather than extra
+# lines inside the text cell, so one utterance stays one row all the way into
+# the workbook.
+COL_START, COL_DUR, COL_TEXT, COL_EN, COL_JA = range(5)
 
 
 def tc(seconds: float) -> str:
@@ -79,6 +84,10 @@ class MainWindow(QMainWindow):
         self.info: media.MediaInfo | None = None
         self.result: transcribe.Transcript | None = None
         self.worker: TranscribeWorker | None = None
+        self.tr_worker: TranslateWorker | None = None
+        self._tr_inputs: tuple[list[str], list[str]] = ([], [])
+        # target -> per-row translations, index aligned with result.segments
+        self.translations: dict[str, list[str]] = {}
         self.loader: LoadWorker | None = None
         self._load_dialog: LoadProgressDialog | None = None
         self._pending_path: Path | None = None
@@ -243,13 +252,38 @@ class MainWindow(QMainWindow):
 
         # ---- results
         self.sec_results = self._section("")
+
+        # Translation controls sit directly above the table they fill. The
+        # checkboxes double as the availability indicator: an unchecked box
+        # means the model is not downloaded, and the button says so on click.
+        trow = QHBoxLayout()
+        trow.setSpacing(8)
+        self.lbl_tr_pick = QLabel()
+        trow.addWidget(self.lbl_tr_pick)
+        self.chk_tr = {}
+        for code in ("en", "ja"):
+            box = QCheckBox()
+            box.setChecked(True)
+            self.chk_tr[code] = box
+            trow.addWidget(box)
+        self.btn_translate = QPushButton()
+        self.btn_translate.clicked.connect(self.run_translate)
+        self.btn_translate.setEnabled(False)
+        trow.addWidget(self.btn_translate)
+        self.btn_tr_cancel = QPushButton()
+        self.btn_tr_cancel.clicked.connect(self.cancel_translate)
+        self.btn_tr_cancel.hide()
+        trow.addWidget(self.btn_tr_cancel)
+        trow.addStretch(1)
         root.addWidget(self.sec_results)
-        self.table = QTableWidget(0, 3)
-        self.table.setColumnWidth(0, 110)
-        self.table.setColumnWidth(1, 80)
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Fixed)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        root.addLayout(trow)
+
+        self.table = QTableWidget(0, 5)
+        self.table.setColumnWidth(0, 100)
+        self.table.setColumnWidth(1, 70)
+        for col in (COL_TEXT, COL_EN, COL_JA):
+            self.table.horizontalHeader().setSectionResizeMode(
+                col, QHeaderView.Stretch)
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.itemSelectionChanged.connect(self._on_row_selected)
@@ -312,6 +346,9 @@ class MainWindow(QMainWindow):
         self.act_download = QAction(self)
         self.act_download.triggered.connect(self.download_models)
         self.menu_tools.addAction(self.act_download)
+        self.act_download_mt = QAction(self)
+        self.act_download_mt.triggered.connect(self.download_mt_models)
+        self.menu_tools.addAction(self.act_download_mt)
         self.act_open_models = QAction(self)
         self.act_open_models.triggered.connect(self.open_models_dir)
         self.menu_tools.addAction(self.act_open_models)
@@ -363,9 +400,17 @@ class MainWindow(QMainWindow):
         self.chk_loud.setToolTip(t("opt.loudnorm_tip"))
         self.btn_run.setText(t("run"))
         self.sec_results.setText(t("section.results"))
+        self.lbl_tr_pick.setText(t("translate.pick"))
+        for code, box in self.chk_tr.items():
+            box.setText(t("mt." + code))
+            box.setToolTip(t("mt." + code + ".note"))
+        self.btn_translate.setText(t("action.translate"))
+        self.btn_tr_cancel.setText(t("load.cancel"))
         self.table.setHorizontalHeaderLabels([t("table.col_start"),
                                               t("table.col_dur"),
-                                              t("table.col_text")])
+                                              t("table.col_text"),
+                                              t("table.col_en"),
+                                              t("table.col_ja")])
         self.btn_copy.setText(t("action.copy"))
         self.btn_save.setText(t("action.export"))
         self.btn_clip.setText(t("action.export_clip"))
@@ -375,6 +420,7 @@ class MainWindow(QMainWindow):
         self.act_quit.setText(t("menu.quit"))
         self.menu_tools.setTitle(t("menu.tools"))
         self.act_download.setText(t("menu.download_models"))
+        self.act_download_mt.setText(t("menu.download_mt"))
         self.act_open_models.setText(t("menu.open_models"))
         self.act_net.setText(t("net.title"))
         self.act_doctor.setText(t("menu.doctor"))
@@ -523,9 +569,11 @@ class MainWindow(QMainWindow):
         path, info = loaded.path, loaded.info
         self.video_path, self.info = path, info
         self.result = None
+        self.translations = {}
         self.table.setRowCount(0)
         for b in (self.btn_copy, self.btn_save, self.btn_clip):
             b.setEnabled(False)
+        self._refresh_translate_state()
         self._refresh_file_label()
 
         self.slider.setDuration(info.duration)
@@ -686,6 +734,13 @@ class MainWindow(QMainWindow):
         dlg = ModelDownloadDialog(self)
         dlg.exec()
         self._refresh_model_state()
+        self._refresh_translate_state()
+
+    def download_mt_models(self) -> None:
+        from .mt_dialog import MtDownloadDialog
+        dlg = MtDownloadDialog(self)
+        dlg.exec()
+        self._refresh_translate_state()
 
     def open_models_dir(self) -> None:
         from PySide6.QtCore import QUrl
@@ -747,11 +802,13 @@ class MainWindow(QMainWindow):
     def _on_done(self, result: transcribe.Transcript) -> None:
         self.worker = None
         self.result = result
+        self.translations = {}
         self.progress.hide()
         self.btn_run.setEnabled(True)
         self._fill_table(result)
         for b in (self.btn_copy, self.btn_save, self.btn_clip):
             b.setEnabled(True)
+        self._refresh_translate_state()
         speed = f"{1 / result.rtf:.0f}×" if result.rtf else "—"
         fmt = t("status.done", count=len(result.segments),
                 elapsed=f"{result.elapsed:.1f}", audio=f"{result.audio_seconds:.0f}",
@@ -779,11 +836,129 @@ class MainWindow(QMainWindow):
             t2.setToolTip(t("row.tip_suspect") if seg.suspicious else t("row.tip"))
             if seg.suspicious:
                 t2.setBackground(Qt.GlobalColor.yellow)
-            for col, item in ((0, t0), (1, t1), (2, t2)):
-                if col < 2:
+            cells = {COL_START: t0, COL_DUR: t1, COL_TEXT: t2}
+            for code, col in (("en", COL_EN), ("ja", COL_JA)):
+                text = self.translations.get(code, [])
+                item = QTableWidgetItem(text[row] if row < len(text) else "")
+                item.setToolTip(t("row.tip_translation"))
+                cells[col] = item
+            for col, item in cells.items():
+                if col in (COL_START, COL_DUR):
                     item.setFlags(item.flags() & ~Qt.ItemIsEditable)
                 self.table.setItem(row, col, item)
         self.table.resizeRowsToContents()
+
+    # ------------------------------------------------------------- translate
+    def _selected_targets(self) -> list[str]:
+        return [c for c, box in self.chk_tr.items() if box.isChecked()]
+
+    def _refresh_translate_state(self) -> None:
+        """Enable the button only when there is text and a target, and mark
+        the boxes whose model is still missing."""
+        ready = self.result is not None and self.table.rowCount() > 0
+        for code, box in self.chk_tr.items():
+            have = catalog.mt_model_ready(code)
+            box.setEnabled(ready and not self._tr_busy)
+            font = box.font()
+            font.setStrikeOut(not have)
+            box.setFont(font)
+        targets = self._selected_targets()
+        missing = [c for c in targets if not catalog.mt_model_ready(c)]
+        enabled = (ready and bool(targets) and not missing
+                   and self.tr_worker is None)
+        self.btn_translate.setEnabled(enabled)
+        self.btn_translate.setToolTip(
+            t("dlg.mt_missing", targets="、".join(
+                catalog.MT_MODELS[c].target for c in missing))
+            if missing else "")
+
+    @property
+    def _tr_busy(self) -> bool:
+        return self.tr_worker is not None
+
+    def run_translate(self) -> None:
+        from .. import translate as mt
+        if self.tr_worker is not None:
+            return
+        segs = self._current_segments()
+        if not segs:
+            self.statusBar().showMessage(t("warn.no_translation"))
+            return
+        targets = self._selected_targets()
+        if not targets:
+            self.statusBar().showMessage(t("err.mt_no_target"))
+            return
+        missing = [c for c in targets if not catalog.mt_model_ready(c)]
+        if missing:
+            QMessageBox.warning(
+                self, t("dlg.translate_failed"),
+                t("dlg.mt_missing", targets="、".join(
+                    catalog.MT_MODELS[c].target for c in missing)))
+            return
+
+        texts = [s.text for s in segs]
+        self.btn_translate.hide()
+        self.btn_tr_cancel.show()
+        self.progress.show()
+        self.statusBar().showMessage(t("status.translating", done=0, total=len(texts)))
+        self.tr_worker = TranslateWorker(texts, targets, self)
+        self.tr_worker.progress.connect(
+            lambda code, done, total: self.statusBar().showMessage(
+                t("status.translating", done=done, total=total)))
+        self.tr_worker.finished_ok.connect(self._on_translated)
+        self.tr_worker.failed.connect(self._on_translate_failed)
+        self._tr_inputs = (texts, targets)
+        self.tr_worker.start()
+
+    def cancel_translate(self) -> None:
+        if self.tr_worker is not None:
+            self.tr_worker.cancel()
+            self.statusBar().showMessage(t("err.mt_cancelled"))
+
+    def _on_translated(self, result) -> None:
+        texts, targets = getattr(self, "_tr_inputs", ([], []))
+        self.tr_worker = None
+        self._tr_inputs = ([], [])
+        self.progress.hide()
+        self.btn_tr_cancel.hide()
+        self.btn_translate.show()
+        for code in targets:
+            values = result.texts.get(code) or []
+            self.translations[code] = values
+            col = COL_EN if code == "en" else COL_JA
+            for row in range(self.table.rowCount()):
+                item = self.table.item(row, col)
+                if item is not None:
+                    item.setText(values[row] if row < len(values) else "")
+        self.table.resizeRowsToContents()
+        langs = "、".join(t("mt." + c) for c in targets)
+        self.statusBar().showMessage(t(
+            "status.translated", langs=langs, count=len(texts),
+            elapsed=f"{result.elapsed:.1f}"))
+        self._refresh_translate_state()
+
+    def _on_translate_failed(self, msg: str) -> None:
+        self.tr_worker = None
+        self._tr_inputs = ([], [])
+        self.progress.hide()
+        self.btn_tr_cancel.hide()
+        self.btn_translate.show()
+        self.statusBar().showMessage(t("status.translate_failed"))
+        self._refresh_translate_state()
+        QMessageBox.critical(self, t("dlg.translate_failed"), msg)
+
+    def _current_translations(self) -> dict | None:
+        """Translations as the table currently shows them, so a hand-fixed
+        cell is what gets exported."""
+        out: dict[str, list[str]] = {}
+        for code, col in (("en", COL_EN), ("ja", COL_JA)):
+            values = []
+            for row in range(self.table.rowCount()):
+                item = self.table.item(row, col)
+                values.append(item.text() if item else "")
+            if any(v.strip() for v in values):
+                out[code] = values
+        return out or None
 
     def _on_row_selected(self) -> None:
         row = self.table.currentRow()
@@ -798,7 +973,7 @@ class MainWindow(QMainWindow):
             return []
         segs = []
         for row, seg in enumerate(self.result.segments):
-            item = self.table.item(row, 2)
+            item = self.table.item(row, COL_TEXT)
             segs.append(Segment(seg.start, seg.end,
                                 item.text() if item else seg.text,
                                 suspicious=seg.suspicious))
@@ -806,10 +981,18 @@ class MainWindow(QMainWindow):
 
     # --------------------------------------------------------------- output
     def copy_text(self) -> None:
+        from .. import export
         segs = self._current_segments()
         if not segs:
             return
-        QApplication.clipboard().setText(render_txt(segs))
+        tr = self._current_translations()
+        active = export._active_translations(tr)
+        if active:
+            QApplication.clipboard().setText(
+                export.render_txt(export._as_cues(segs), False,
+                                  export._variants(active, len(segs))))
+        else:
+            QApplication.clipboard().setText(render_txt(segs))
         self.statusBar().showMessage(t("status.copied"))
 
     def export(self) -> None:
@@ -829,7 +1012,8 @@ class MainWindow(QMainWindow):
         fmt = export.guess_format(p.name)
         try:
             export.write(p, segs, fmt, lang=get_language(),
-                         json_payload=self.result.to_dict() if self.result else {})
+                         json_payload=self.result.to_dict() if self.result else {},
+                         translations=self._current_translations())
         except (OSError, export.ExportError) as exc:
             QMessageBox.critical(self, t("dlg.export_failed"), str(exc))
             return
@@ -875,6 +1059,9 @@ class MainWindow(QMainWindow):
         if self.worker is not None:
             self.worker.cancel()
             self.worker.wait(5000)
+        if self.tr_worker is not None:
+            self.tr_worker.cancel()
+            self.tr_worker.wait(5000)
         self.player.stop()
         super().closeEvent(ev)
 

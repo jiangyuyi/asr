@@ -74,17 +74,39 @@ def parse_srt(text: str) -> list[Cue]:
     return cues
 
 
-def render_srt(cues: list[Cue]) -> str:
+def render_srt(cues: list[Cue], variants: list[list[str]] | None = None) -> str:
+    """Render subtitles. ``variants`` holds extra lines per cue, index-aligned."""
     out: list[str] = []
-    for i, c in enumerate(cues, 1):
-        out.append(f"{i}")
+    for n, c in enumerate(cues):
+        out.append(f"{n + 1}")
         out.append(f"{format_ts(c.start)} --> {format_ts(c.end)}")
         out.append(c.text)
+        for line in (variants[n] if variants and n < len(variants) else ()):
+            if line:
+                out.append(line)
         out.append("")
     return "\n".join(out)
 
 
-def render_txt(cues: list[Cue], with_timestamps: bool = False) -> str:
+def render_txt(cues: list[Cue], with_timestamps: bool = False,
+               variants: list[list[str]] | None = None) -> str:
+    """Render plain text.
+
+    Without translations this keeps the original shape: one flowing paragraph
+    with no line breaks, which is what Chinese transcripts want. As soon as
+    translations exist the lines have to be distinguishable, so each cue
+    becomes its own line carrying every language in a fixed order.
+    """
+    if variants:
+        lines = []
+        for i, c in enumerate(cues):
+            extra = [ln for ln in (variants[i] if i < len(variants) else ()) if ln]
+            body = " ".join([c.text] + extra)
+            if with_timestamps:
+                lines.append(f"[{format_ts(c.start, comma=False)}] {body}")
+            else:
+                lines.append(body)
+        return "\n".join(lines)
     if not with_timestamps:
         return "".join(c.text if c.text.endswith(("。", "！", "？", "，", "、", "…"))
                        else c.text + "。" for c in cues)

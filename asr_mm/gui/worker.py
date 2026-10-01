@@ -52,3 +52,41 @@ class TranscribeWorker(QThread):
         except Exception as exc:
             detail = traceback.format_exc(limit=3)
             self.failed.emit(f"{exc}\n\n{detail}")
+
+
+class TranslateWorker(QThread):
+    """Load the models and translate on this thread.
+
+    Model loading is a few hundred milliseconds per target and the run itself
+    is seconds, but doing either on the GUI thread would freeze the window
+    exactly the way the 1.2.0 load bug did.
+    """
+
+    progress = Signal(str, int, int)   # target, done, total
+    finished_ok = Signal(object)       # translate.TranslationResult
+    failed = Signal(str)
+
+    def __init__(self, texts: list[str], targets: list[str], parent=None):
+        super().__init__(parent)
+        self.texts = list(texts)
+        self.targets = list(targets)
+        self._cancelled = False
+
+    def cancel(self) -> None:
+        self._cancelled = True
+
+    def run(self) -> None:
+        from .. import translate as mt
+        try:
+            with mt.Translator(self.targets, progress=self.progress.emit) as tr:
+                result = tr.translate(self.texts, should_cancel=self._is_cancelled)
+            if self._cancelled:
+                self.failed.emit(mt.t("err.mt_cancelled"))
+            else:
+                self.finished_ok.emit(result)
+        except Exception as exc:
+            detail = traceback.format_exc(limit=3)
+            self.failed.emit(f"{exc}\n\n{detail}")
+
+    def _is_cancelled(self) -> bool:
+        return self._cancelled

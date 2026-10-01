@@ -12,6 +12,14 @@ from .i18n import t
 RUNTIME_VERSION = "v1.4.16"
 RUNTIME_BASE = f"https://github.com/modelscope/FunASR/releases/download/{RUNTIME_VERSION}"
 
+# The translation models are converted to CTranslate2 int8 by
+# tools/prepare_mt_models.py and published as release assets rather than pulled
+# from a third-party repository: there is no public zh->ja conversion to borrow,
+# and hosting our own means one checksum we control instead of two we don't.
+MT_VERSION = "v1.5.0"
+MT_BASE = f"https://github.com/jiangyuyi/asr/releases/download/{MT_VERSION}"
+MT_HF = "https://huggingface.co/Helsinki-NLP"
+
 HF = "https://huggingface.co/FunAudioLLM"
 # ModelScope mirrors the same GGUF repos and is reachable from mainland China
 # without a VPN. Used as a fallback when HuggingFace is blocked, slow, or
@@ -25,6 +33,10 @@ class ModelFile:
     filename: str
     size: int  # bytes
     mirror_url: str = ""   # same bytes, alternate host
+    # Optional. The ASR weights were pinned by size only; translation weights
+    # are 100-210 MB, where a truncated download that still passes the size
+    # check is worth catching.
+    sha256: str = ""
 
     def sources(self, mirror: str = "auto") -> list[str]:
         """URLs to try, in order, honouring the user's mirror preference."""
@@ -125,6 +137,133 @@ SENSEVOICE = ModelSpec(
 
 MODELS: dict[str, ModelSpec] = {m.key: m for m in (NANO, PARAFORMER, SENSEVOICE)}
 DEFAULT_MODEL = "nano"
+
+# ------------------------------------------------------------------ translation
+
+@dataclass(frozen=True)
+class MTModelSpec:
+    """A CTranslate2 translation model, one per target language.
+
+    Files live under ``<models>/<dir_name>/`` so the two languages never
+    collide and a half-finished download of one cannot make the other look
+    ready.
+    """
+
+    key: str                       # target language code
+    target: str                    # native name, for the UI
+    dir_name: str
+    files: tuple[ModelFile, ...]
+    note: str = ""
+    # "marian" (OPUS-MT) or "m2m100". They differ in more than the file names:
+    # Marian needs a trailing </s> on the source and has separate source and
+    # target tokenizers, while M2M100 has one joint tokenizer and uses explicit
+    # language codes. See asr_mm.translate.
+    kind: str = "marian"
+    spm_file: str = "source.spm"
+    # M2M100 source language token; the target one lives in langs.json because
+    # the exact string depends on the checkpoint's fairseq dictionary.
+    src_lang: str = ""
+    strip_spaces: bool = False
+
+    def size(self) -> int:
+        return sum(f.size for f in self.files)
+
+    def sources(self, mirror: str = "auto") -> list[list[str]]:
+        return [f.sources(mirror) for f in self.files]
+
+
+def _mt_files(slug: str, entries: dict[str, tuple[int, str]]) -> tuple[ModelFile, ...]:
+    """``{"model.bin": (size, sha256), ...}`` -> download descriptors.
+
+    Release asset names cannot contain a slash, so the per-model directory
+    (``mt-en/``) lives in the asset name rather than in the path; the app
+    still lays the files out in that directory under the models root.
+    """
+    return tuple(
+        ModelFile(f"{MT_BASE}/mt-{slug}-{name}", name, size, sha256=sha)
+        for name, (size, sha) in entries.items()
+    )
+
+
+MT_EN_FILES = _mt_files("en", {
+    "model.bin": (79_567_635,
+                  "e4955858cae9542bef37424a9b79720e3db2f32501fe62264c0cd3eac6319777"),
+    "config.json": (233,
+                    "72901fbd8abd89fb5cf4a388f26fc681f5c4c58a1e1a88b30b879f107270e7ee"),
+    "shared_vocabulary.json": (
+        1_368_999,
+        "55d071d6c63a2dab993f00e77077eca76573ac6964990e2e80de7462344401fb"),
+    "source.spm": (804_677,
+                   "e27a3a1b539f4959ec72ea60e453f49156289f95d4e6000b29332efc45616203"),
+    "target.spm": (806_530,
+                   "6a881f4717cd7265f53fea54fd3dc689c767c05338fac7a4590f3088cb2d7855"),
+})
+
+MT_JA_FILES = _mt_files("ja", {
+    "model.bin": (490_667_752,
+                  "590e9c7e229e84de8affe7b15487660a286d3d76e44a4ca10e33099b198d9a76"),
+    "config.json": (233,
+                    "72901fbd8abd89fb5cf4a388f26fc681f5c4c58a1e1a88b30b879f107270e7ee"),
+    "shared_vocabulary.json": (
+        2_924_590,
+        "3463563ecd8b5083f48496c460aaaa8b0ecfb54c9e255f71d4504c8f11c43c06"),
+    "sentencepiece.bpe.model": (
+        2_423_393,
+        "d8f7c76ed2a5e0822be39f0a4f95a55eb19c78f4593ce609e2edbc2aea4d380a"),
+    "langs.json": (139,
+                   "da08b5e251f17cca1bf6a807de80c3056ec0e3bc2bfd3708664ac23f2b6aef38"),
+})
+
+MT_MODELS: dict[str, MTModelSpec] = {
+    "en": MTModelSpec(
+        key="en", target="English", dir_name="mt-en", files=MT_EN_FILES,
+        kind="marian", spm_file="source.spm",
+        note="OPUS-MT 中译英。语料以通用书面语为主，课堂短句译得干净。"),
+    # OPUS-MT 没有简中↔日的语言对：唯一的中日检查点 opus-mt-tc-big-zh-ja
+    # 发布的词表里没有中文（用 HuggingFace 自己的 tokenizer，14 个 token 里 6 个
+    # 变 <unk>）。zh->en->ja 中转也实测不可用——opus-mt-en-jap 是文学语料，
+    # 「大家一起讨论」会译成「弟子たちは互に語り合うべきである」。M2M100 直译。
+    "ja": MTModelSpec(
+        key="ja", target="日本語", dir_name="mt-ja", files=MT_JA_FILES,
+        kind="m2m100", spm_file="sentencepiece.bpe.model",
+        src_lang="__zh__", strip_spaces=True,
+        note="M2M100-418M 中译日。质量弱于英文：能读懂但偶有实错"
+             "（3つのコピーして），建议人工复核。"),
+}
+
+MT_DEFAULT_TARGETS = ("en", "ja")
+
+
+
+def mt_targets() -> tuple[str, ...]:
+    return tuple(MT_MODELS)
+
+
+def resolve_mt(code: str) -> MTModelSpec:
+    try:
+        return MT_MODELS[(code or "").strip().lower()]
+    except KeyError:
+        raise KeyError(code) from None
+
+
+def mt_model_dir(code: str) -> "Path":
+    from . import paths
+    return paths.models_dir() / resolve_mt(code).dir_name
+
+
+def mt_model_ready(code: str) -> bool:
+    """True when every file of the model is present at a plausible size."""
+    try:
+        spec = resolve_mt(code)
+    except KeyError:
+        return False
+    d = mt_model_dir(code)
+    for f in spec.files:
+        p = d / f.filename
+        if not p.exists() or p.stat().st_size < f.size * 0.95:
+            return False
+    return True
+
 
 _ALIASES: dict[str, str] = {}
 for _m in MODELS.values():

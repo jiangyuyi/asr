@@ -114,6 +114,34 @@ def ensure_model(key: str, progress: Progress | None = None,
     return spec
 
 
+# ------------------------------------------------------------------ translation
+
+def mt_model_path(code: str, filename: str) -> Path:
+    return paths.models_dir() / catalog.MT_MODELS[code].dir_name / filename
+
+
+def mt_missing_files(spec: catalog.MTModelSpec) -> list[catalog.ModelFile]:
+    out = []
+    for f in spec.files:
+        p = mt_model_path(spec.key, f.filename)
+        if not p.exists() or not _size_ok(p.stat().st_size, f.size):
+            out.append(f)
+    return out
+
+
+def ensure_mt_model(code: str, progress: Progress | None = None,
+                    cfg: net.NetConfigLoaded | None = None) -> catalog.MTModelSpec:
+    """Download the translation model for one target language. Idempotent."""
+    spec = catalog.MT_MODELS[code]
+    cfg = cfg or net_config()
+    for f in mt_missing_files(spec):
+        dest = mt_model_path(code, f.filename)
+        net.fetch(f.sources(cfg.mirror), dest, net.build_context(cfg),
+                  expect_size=f.size, expect_sha256=f.sha256,
+                  on_progress=progress)
+    return spec
+
+
 # ------------------------------------------------------------------------ runtime
 
 def detect_runtime_key() -> str:
