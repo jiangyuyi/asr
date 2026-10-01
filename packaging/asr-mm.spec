@@ -85,6 +85,11 @@ def build(script: str, name: str, console: bool, argv_emulation: bool):
             # every certificate; truststore teaches OpenSSL to read the OS
             # keychain, which is where a corporate root certificate lives.
             "certifi", "truststore",
+            # Excel export. openpyxl ships XML templates and a style table as
+            # data files, and its submodules load lazily, so it needs both.
+            "openpyxl", "openpyxl.cell._writer", "openpyxl.styles",
+            "openpyxl.styles.numbers", "openpyxl.utils",
+            "openpyxl.worksheet._writer", "openpyxl.workbook",
         ],
         hookspath=[],
         hooksconfig={},
