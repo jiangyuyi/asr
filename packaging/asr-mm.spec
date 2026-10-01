@@ -90,6 +90,10 @@ def build(script: str, name: str, console: bool, argv_emulation: bool):
             "openpyxl", "openpyxl.cell._writer", "openpyxl.styles",
             "openpyxl.styles.numbers", "openpyxl.utils",
             "openpyxl.worksheet._writer", "openpyxl.workbook",
+            # 翻译。ctranslate2 / sentencepiece 都是编译扩展，由 PyInstaller
+            # 自带的 hook 收集，但 asr_mm.translate 是惰性 import 的，hook 看不到，
+            # 所以显式点名。numpy 是 ctranslate2 的硬依赖。
+            "ctranslate2", "ctranslate2.ext", "sentencepiece", "numpy",
         ],
         hookspath=[],
         hooksconfig={},

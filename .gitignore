@@ -98,3 +98,16 @@ tools/lang_probe/
 video-creater-*.json
 vendor/
 venv/
+
+# 翻译模型构建产物（一次性，不入库）
+.mt-cache/
+.venv4/
+build_mt/
+tools/mt_*.log
+tools/final_1*.txt
+build_e2e/
+build_e2e2/
+build_gui_smoke/
+build_assets/
+build_onnx/
+build_frozen/

@@ -145,8 +145,29 @@ jobs:
 
             模型不会打进安装包，在首次运行时下载并缓存到用户目录。
 
+            ### 翻译（1.5.0 新增）
+
+            转写后可以把中文结果翻成**英文和日文**，同样完全离线。
+            界面在结果表右侧多出「英文」「日文」两列，译文也能手动改；
+            导出 Excel 时自动追加两列，txt / srt / json 一并带上。
+
+            翻译模型单独下载（工具 → 下载翻译模型，或 `asr-mm mt download`）：
+
+            | 目标 | 大小 | 授权 | 质量 |
+            |---|---|---|---|
+            | 中 → 英 | 约 79 MB | CC-BY-4.0，可商用 | 好 |
+            | 中 → 日 | 约 473 MB | **CC-BY-NC-4.0，禁止商用** | 需人工复核 |
+
+            > 日文模型为 CC-BY-NC，教学与非营利用途没问题，商用前请先确认。
+            > 日文会出实错（如「面積」译成「表面公式」），重要场合请复核。
+
+            选型与踩坑记录见仓库 [docs/TRANSLATION.md](https://github.com/jiangyuyi/asr/blob/main/docs/TRANSLATION.md)。
+
             ### 许可
 
             代码 MIT。识别引擎与模型来自 [modelscope/FunASR](https://github.com/modelscope/FunASR)（MIT）。
+            翻译运行时 [CTranslate2](https://github.com/OpenNMT/CTranslate2)（MIT）；
+            英文翻译模型 [Helsinki-NLP/opus-mt-zh-en](https://huggingface.co/Helsinki-NLP/opus-mt-zh-en)（CC-BY-4.0）；
+            日文翻译模型 [facebook/m2m100_418M](https://huggingface.co/facebook/m2m100_418M)（**CC-BY-NC-4.0**）。
           files: release/*
           fail_on_unmatched_files: true

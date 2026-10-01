@@ -27,13 +27,41 @@ XLSX_HEADERS_ZH = ["序号", "开始", "结束", "开始(秒)", "时长(秒)", "
 XLSX_HEADERS_EN = ["#", "Start", "End", "Start (s)", "Duration (s)", "Text"]
 XLSX_HEADERS_JA = ["番号", "開始", "終了", "開始(秒)", "長さ(秒)", "内容"]
 
+# Translation columns, appended only when a translation actually exists so a
+# 1.4.0-era workbook still comes out with six columns.
+XLSX_TRAILING_ZH = {"en": "英文", "ja": "日文"}
+XLSX_TRAILING_EN = {"en": "English", "ja": "Japanese"}
+XLSX_TRAILING_JA = {"en": "英訳", "ja": "日訳"}
+
+# Fixed order regardless of dict iteration order, so the same run always lands
+# in the same columns.
+TRANSLATION_ORDER = ("en", "ja")
+
+Translations = dict[str, list[str]]
+
+
+def _active_translations(translations: Translations | None) -> list[tuple[str, list[str]]]:
+    """Pairs of (code, texts) for targets that actually carry content."""
+    if not translations:
+        return []
+    out = []
+    for code in TRANSLATION_ORDER:
+        texts = translations.get(code)
+        if texts and any(str(t).strip() for t in texts):
+            out.append((code, list(texts)))
+    return out
+
 
 class ExportError(RuntimeError):
     pass
 
 
-def _headers(lang: str) -> list[str]:
-    return {"en": XLSX_HEADERS_EN, "ja": XLSX_HEADERS_JA}.get(lang, XLSX_HEADERS_ZH)
+def _headers(lang: str, active: list[tuple[str, list[str]]] | None = None) -> list[str]:
+    base = {"en": XLSX_HEADERS_EN, "ja": XLSX_HEADERS_JA}.get(lang, XLSX_HEADERS_ZH)
+    if not active:
+        return list(base)
+    tail = {"en": XLSX_TRAILING_EN, "ja": XLSX_TRAILING_JA}.get(lang, XLSX_TRAILING_ZH)
+    return list(base) + [tail[code] for code, _ in active]
 
 
 def _as_cues(segments) -> list[Cue]:
@@ -47,13 +75,32 @@ def _as_cues(segments) -> list[Cue]:
     return out
 
 
+def _variants(active: list[tuple[str, list[str]]], count: int) -> list[list[str]]:
+    """Transpose ``[(code, texts)]`` into per-row line lists, padded to count."""
+    rows: list[list[str]] = []
+    for i in range(count):
+        rows.append([_at(texts, i) for _, texts in active])
+    return rows
+
+
+def _at(texts: list[str], i: int) -> str:
+    return str(texts[i]) if i < len(texts) else ""
+
+
 def write_txt(path: Path, segments, *, timestamps: bool = False,
-              lang: str = "zh") -> None:
-    path.write_text(render_txt(_as_cues(segments), timestamps), encoding="utf-8")
+              lang: str = "zh", translations: Translations | None = None) -> None:
+    active = _active_translations(translations)
+    cues = _as_cues(segments)
+    variants = _variants(active, len(cues)) if active else None
+    path.write_text(render_txt(cues, timestamps, variants), encoding="utf-8")
 
 
-def write_srt(path: Path, segments) -> None:
-    path.write_text(render_srt(_as_cues(segments)), encoding="utf-8")
+def write_srt(path: Path, segments,
+              translations: Translations | None = None) -> None:
+    active = _active_translations(translations)
+    cues = _as_cues(segments)
+    variants = _variants(active, len(cues)) if active else None
+    path.write_text(render_srt(cues, variants), encoding="utf-8")
 
 
 def write_json(path: Path, payload: dict) -> None:
@@ -61,7 +108,8 @@ def write_json(path: Path, payload: dict) -> None:
                     encoding="utf-8")
 
 
-def write_xlsx(path: Path, segments, *, lang: str = "zh") -> None:
+def write_xlsx(path: Path, segments, *, lang: str = "zh",
+               translations: Translations | None = None) -> None:
     """One row per utterance.
 
     A missing openpyxl is a clear message rather than an ImportError traceback
@@ -76,11 +124,12 @@ def write_xlsx(path: Path, segments, *, lang: str = "zh") -> None:
             "导出 Excel 需要 openpyxl，请重新安装本程序。") from exc
 
     cues = _as_cues(segments)
+    active = _active_translations(translations)
     wb = Workbook()
     ws = wb.active
     ws.title = "Transcript"
 
-    headers = _headers(lang)
+    headers = _headers(lang, active)
     ws.append(headers)
 
     head_font = Font(bold=True, color="FFFFFF")
@@ -91,18 +140,23 @@ def write_xlsx(path: Path, segments, *, lang: str = "zh") -> None:
         cell.fill = head_fill
         cell.alignment = Alignment(horizontal="center", vertical="center")
 
-    for i, c in enumerate(cues, 1):
-        ws.append([i, format_ts(c.start, comma=False), format_ts(c.end, comma=False),
-                   round(c.start, 3), round(c.duration, 2), c.text])
+    for n, c in enumerate(cues):
+        row = [n + 1, format_ts(c.start, comma=False),
+               format_ts(c.end, comma=False),
+               round(c.start, 3), round(c.duration, 2), c.text]
+        # Translations are index-aligned with the segment list, so they must be
+        # read with the 0-based index even though the sheet numbers rows from 1.
+        row += [_at(texts, n) for _, texts in active]
+        ws.append(row)
 
-    widths = [6, 14, 14, 11, 11, 70]
+    widths = [6, 14, 14, 11, 11, 70] + [70] * len(active)
     for col, width in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(col)].width = width
 
-    text_col = len(headers)
     for row in range(2, len(cues) + 2):
-        ws.cell(row=row, column=text_col).alignment = Alignment(
-            wrap_text=True, vertical="top")
+        for col in range(6, len(headers) + 1):
+            ws.cell(row=row, column=col).alignment = Alignment(
+                wrap_text=True, vertical="top")
         for col in (1, 4, 5):
             ws.cell(row=row, column=col).alignment = Alignment(
                 horizontal="right", vertical="top")
@@ -116,18 +170,34 @@ def write_xlsx(path: Path, segments, *, lang: str = "zh") -> None:
     wb.save(path)
 
 
+def with_translations(payload: dict, segments,
+                      translations: Translations | None) -> dict:
+    """JSON output gains a ``translations`` block, index-aligned with segments."""
+    active = _active_translations(translations)
+    if not active:
+        return payload
+    out = dict(payload)
+    out["translations"] = {
+        code: list(texts) for code, texts in active
+    }
+    return out
+
+
 def write(path: Path, segments, fmt: str, *, timestamps: bool = False,
-          lang: str = "zh", json_payload: dict | None = None) -> Path:
+          lang: str = "zh", json_payload: dict | None = None,
+          translations: Translations | None = None) -> Path:
     """Dispatch to one writer. Returns the path written."""
     fmt = fmt.lower().lstrip(".")
     if fmt == "txt":
-        write_txt(path, segments, timestamps=timestamps, lang=lang)
+        write_txt(path, segments, timestamps=timestamps, lang=lang,
+                  translations=translations)
     elif fmt == "srt":
-        write_srt(path, segments)
+        write_srt(path, segments, translations=translations)
     elif fmt == "json":
-        write_json(path, json_payload or {})
+        payload = with_translations(json_payload or {}, segments, translations)
+        write_json(path, payload)
     elif fmt == "xlsx":
-        write_xlsx(path, segments, lang=lang)
+        write_xlsx(path, segments, lang=lang, translations=translations)
     else:
         raise ExportError(f"未知的导出格式: {fmt}")
     return path
@@ -135,13 +205,15 @@ def write(path: Path, segments, fmt: str, *, timestamps: bool = False,
 
 def write_all(out_dir: Path, stem: str, segments, formats: Sequence[str], *,
               timestamps: bool = False, lang: str = "zh",
-              json_payload: dict | None = None) -> list[Path]:
+              json_payload: dict | None = None,
+              translations: Translations | None = None) -> list[Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     written = []
     for fmt in formats:
         target = out_dir / f"{stem}{EXTENSIONS.get(fmt, '.' + fmt)}"
         written.append(write(target, segments, fmt, timestamps=timestamps,
-                             lang=lang, json_payload=json_payload))
+                             lang=lang, json_payload=json_payload,
+                             translations=translations))
     return written
 
 

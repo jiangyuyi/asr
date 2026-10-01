@@ -201,11 +201,13 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 # ----------------------------------------------------------------- transcribe
 
 def _write_outputs(tr: transcribe.Transcript, out_dir: Path, stem: str,
-                   formats: list[str], timestamps: bool) -> list[Path]:
+                   formats: list[str], timestamps: bool,
+                   translations: dict | None = None) -> list[Path]:
     from . import export
     return export.write_all(out_dir, stem, tr.segments, formats,
                             timestamps=timestamps, lang=get_language(),
-                            json_payload=tr.to_dict())
+                            json_payload=tr.to_dict(),
+                            translations=translations)
 
 
 def _model_lang_warning(model: str, content_lang: str) -> str:
@@ -242,12 +244,66 @@ def cmd_transcribe(args: argparse.Namespace) -> int:
             _summary(tr, to_stderr=True)
         return 0
 
+    translations = _maybe_translate(args, tr)
     src = Path(tr.source)
     stem = args.name or f"{src.stem}_{_range_tag(tr)}"
     out_dir = Path(args.out_dir) if args.out_dir else src.parent / f"{src.stem}_transcript"
-    for p in _write_outputs(tr, out_dir, stem, args.format, args.timestamps):
+    for p in _write_outputs(tr, out_dir, stem, args.format, args.timestamps,
+                            translations):
         print(t("cli.saved", path=p))
     _summary(tr)
+    return 0
+
+
+def _maybe_translate(args, tr: transcribe.Transcript) -> dict | None:
+    """Translate the transcript in place. Returns {target: [per row]}."""
+    from . import translate as mt
+    targets = mt.normalize_targets(getattr(args, "translate", "") or "")
+    if not targets:
+        return None
+    missing = [c for c in targets if not catalog.mt_model_ready(c)]
+    if missing:
+        print(t("err.mt_model_missing", target="、".join(
+            catalog.MT_MODELS[c].target for c in missing)), file=sys.stderr)
+        return None
+    with mt.Translator(targets,
+                       progress=_progress(t("cli.mt.progress"))) as tr_engine:
+        result = tr_engine.translate([s.text for s in tr.segments])
+    downloader.clear_progress_line()
+    print(t("cli.translated",
+            langs="、".join(t("mt." + c) for c in targets),
+            count=result.total, elapsed=f"{result.elapsed:.1f}"),
+          file=sys.stderr)
+    return {c: v for c, v in result.texts.items()}
+
+
+def cmd_mt(args: argparse.Namespace) -> int:
+    """Inspect or download the translation models."""
+    if args.action == "list" or args.action == "status":
+        print(t("cli.mt.title", version=__version__))
+        for spec in catalog.MT_MODELS.values():
+            ready = catalog.mt_model_ready(spec.key)
+            mark = (t("cli.models.state_ready") if ready
+                    else t("cli.models.state_missing"))
+            print(f"  {spec.key:4s} {pad(t('mt.' + spec.key), 18)}"
+                  f"{downloader.human(spec.size()):>11s}  {mark}")
+            print(f"       {t('mt.' + spec.key + '.note')}")
+        return 0
+
+    key = args.target or next(iter(catalog.MT_MODELS))
+    try:
+        spec = catalog.resolve_mt(key)
+    except KeyError:
+        print(t("err.unknown_model", key=key,
+                list=", ".join(catalog.MT_MODELS)), file=sys.stderr)
+        return 2
+    if catalog.mt_model_ready(spec.key):
+        print(t("cli.mt.ready", key=spec.key))
+        return 0
+    print(t("cli.mt.downloading", key=spec.key, size=downloader.human(spec.size())))
+    downloader.ensure_mt_model(spec.key, progress=_progress(t("cli.mt.progress")))
+    downloader.clear_progress_line()
+    print(t("cli.mt.done", path=catalog.mt_model_dir(spec.key)))
     return 0
 
 
@@ -328,6 +384,8 @@ def build_parser() -> argparse.ArgumentParser:
     tsub.add_argument("--drop-short", action="store_true", help=t("cli.drop_short.help"))
     tsub.add_argument("--threads", type=int, help=t("cli.threads.help"))
     tsub.add_argument("--keep-audio", action="store_true", help=t("cli.keep_audio.help"))
+    tsub.add_argument("--translate", default="", metavar="{en,ja}",
+                      help=t("cli.translate.help"))
     tsub.set_defaults(func=cmd_transcribe)
 
     m = sub.add_parser("models", help=t("cli.models.help"))
@@ -335,6 +393,12 @@ def build_parser() -> argparse.ArgumentParser:
                    choices=["list", "status", "download"])
     m.add_argument("model", nargs="?", choices=list(catalog.MODELS))
     m.set_defaults(func=cmd_models)
+
+    mt = sub.add_parser("mt", help=t("cli.mt.help"))
+    mt.add_argument("action", nargs="?", default="list",
+                    choices=["list", "status", "download"])
+    mt.add_argument("target", nargs="?", choices=list(catalog.MT_MODELS))
+    mt.set_defaults(func=cmd_mt)
 
     s = sub.add_parser("setup", help=t("cli.setup.help"))
     s.add_argument("-m", "--model", choices=list(catalog.MODELS),
