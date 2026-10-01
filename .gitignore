@@ -92,5 +92,9 @@ tools/verify_110.txt
 tools/verify_120.py
 tools/verify_120.txt
 tools/日本語/
+tools/cli_xlsx/
+tools/export_demo/
+tools/lang_probe/
+video-creater-*.json
 vendor/
 venv/
