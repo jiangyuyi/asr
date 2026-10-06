@@ -11,7 +11,8 @@ ZH: dict[str, str] = {
                  "解密代理，浏览器能正常访问但程序可能报证书错误，"
                  "可在这里指定公司根证书或切换下载源。"),
     "net.mirror": "下载源",
-    "net.mirror_auto": "自动（Hugging Face 优先，失败换 ModelScope）",
+    "net.mirror_auto": "自动（Hugging Face 优先，依次换 ModelScope、hf-mirror）",
+    "net.mirror_hfm": "仅 hf-mirror.com（Hugging Face 国内镜像）",
     "net.mirror_hf": "仅 Hugging Face",
     "net.mirror_ms": "仅 ModelScope（国内推荐）",
     "net.ca_bundle": "公司根证书文件",
@@ -74,7 +75,8 @@ EN: dict[str, str] = {
                  "reject the certificate. Point it at your organisation's root "
                  "certificate here, or switch the download source."),
     "net.mirror": "Download source",
-    "net.mirror_auto": "Automatic (Hugging Face first, then ModelScope)",
+    "net.mirror_auto": "Automatic (Hugging Face first, then ModelScope, then hf-mirror)",
+    "net.mirror_hfm": "hf-mirror.com only (Hugging Face mirror for China)",
     "net.mirror_hf": "Hugging Face only",
     "net.mirror_ms": "ModelScope only (recommended in China)",
     "net.ca_bundle": "Organisation root certificate",
@@ -142,7 +144,8 @@ JA: dict[str, str] = {
                  "ブラウザでは開けてもこのプログラムは証明書を拒否することがあります。"
                  "ここで 루ート証明書を指定するか、ダウンロード元を変更してください。"),
     "net.mirror": "ダウンロード元",
-    "net.mirror_auto": "自動（Hugging Face を優先し、失敗時は ModelScope）",
+    "net.mirror_auto": "自動（Hugging Face を優先し、失敗時は ModelScope、hf-mirror の順）",
+    "net.mirror_hfm": "hf-mirror.com のみ（Hugging Face の国内ミラー）",
     "net.mirror_hf": "Hugging Face のみ",
     "net.mirror_ms": "ModelScope のみ（中国国内で推奨）",
     "net.ca_bundle": "会社のルート証明書",

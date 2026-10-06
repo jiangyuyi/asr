@@ -134,6 +134,20 @@ class DownloadError(RuntimeError):
         super().__init__(f"{filename}\n{detail}")
 
 
+class ShortRead(Exception):
+    """The server closed the stream before sending the promised bytes.
+
+    urllib hands back an empty ``read()`` at EOF rather than raising, so a
+    connection that dies mid-transfer used to look exactly like a finished
+    download: the loop broke, the short file was renamed into place, and the
+    app went on to call the model "ready". One real installation ended up with
+    a GGUF that was exactly 100 MB short and nothing noticed.
+
+    Retrying the same mirror is the right move — ``.part`` is kept, so the
+    retry resumes from where it stopped.
+    """
+
+
 def _classify(exc: Exception) -> tuple[str, bool, bool]:
     """(short reason, retry_same_mirror, try_next_mirror).
 
@@ -142,6 +156,8 @@ def _classify(exc: Exception) -> tuple[str, bool, bool]:
     be transient on the same host. Collapsing them into one flag made the
     downloader hammer a mirror that had already said "not here".
     """
+    if isinstance(exc, ShortRead):
+        return str(exc), True, True
     if isinstance(exc, urllib.error.HTTPError):
         code = exc.code
         if code == 404:
@@ -271,6 +287,13 @@ def _download_once(url: str, part: Path, ctx: ssl.SSLContext, offset: int,
                 if on_progress:
                     on_progress(part.name, done, total)
 
+    if expect_size and done != expect_size:
+        # EOF without an exception. Say so instead of letting a short file
+        # through; `.part` stays put so the next attempt resumes.
+        raise ShortRead(
+            f"连接中断：收到 {done:,} 字节，应为 {expect_size:,} 字节"
+            f"（差 {expect_size - done:,}）")
+
 
 def _sha256(path: Path, chunk: int = 1 << 20) -> str:
     import hashlib
@@ -286,6 +309,7 @@ def _sha256(path: Path, chunk: int = 1 << 20) -> str:
 PROBE_URLS = [
     ("Hugging Face", "https://huggingface.co/FunAudioLLM/fsmn-vad-GGUF/resolve/main/fsmn-vad.gguf"),
     ("ModelScope", "https://modelscope.cn/models/FunAudioLLM/fsmn-vad-GGUF/resolve/master/fsmn-vad.gguf"),
+    ("hf-mirror", "https://hf-mirror.com/FunAudioLLM/fsmn-vad-GGUF/resolve/main/fsmn-vad.gguf"),
     ("GitHub", "https://github.com/"),
 ]
 

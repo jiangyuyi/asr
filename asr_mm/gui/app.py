@@ -166,10 +166,12 @@ class MainWindow(QMainWindow):
 
         self.video = QVideoWidget()
         self.video.setMinimumSize(480, 300)
+        self.video.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.video.setStyleSheet("background:#000; border-radius:8px;")
         self.video.hide()
-        ll.addWidget(self.video)
-        ll.addStretch(1)
+        # 撑满左栏。之前 addStretch(1) 把它挤在顶部、下面留一大片空白，
+        # 4:3 的视频被缩成窄条，看着像没在播。
+        ll.addWidget(self.video, 1)
         split.addWidget(left)
 
         right = QWidget()
@@ -324,6 +326,10 @@ class MainWindow(QMainWindow):
         self.player.setAudioOutput(self.audio_out)
         self.player.positionChanged.connect(self._on_position)
         self.player.errorOccurred.connect(self._on_player_error)
+        # 播放状态变化时按钮文案要跟着变：点播放之后唯一按过的控件不给反馈，
+        # 用户会以为没点上。
+        self.player.playbackStateChanged.connect(
+            lambda _s: self._sync_play_button())
 
     def _section(self, title: str) -> QLabel:
         lab = QLabel(title)
@@ -636,10 +642,23 @@ class MainWindow(QMainWindow):
     def _toggle_play(self) -> None:
         if not self.player_ok:
             return
+        # play()/pause() 是异步的，此刻查 playbackState() 还可能是旧值，
+        # 所以按「意图」先设文案，playbackStateChanged 到达时再校正。
         if self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
             self.player.pause()
+            self._set_play_label(False)
         else:
             self.player.play()
+            self._set_play_label(True)
+
+    def _set_play_label(self, playing: bool) -> None:
+        self.btn_play.setText(t("pause") if playing else t("play"))
+        self.btn_play.setToolTip(t("pause") if playing else t("play"))
+
+    def _sync_play_button(self) -> None:
+        """Correct the label from the real state (playback ended, error, …)."""
+        self._set_play_label(
+            self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState)
 
     def _on_position(self, pos: int) -> None:
         self.slider.setPlayhead(pos / 1000.0)

@@ -410,7 +410,7 @@ def build_parser() -> argparse.ArgumentParser:
     d.set_defaults(func=cmd_doctor)
 
     n = sub.add_parser("net-check", help=t("cli.net.help"))
-    n.add_argument("--mirror", choices=["auto", "huggingface", "modelscope"],
+    n.add_argument("--mirror", choices=["auto", "huggingface", "modelscope", "hf-mirror"],
                    help=t("net.mirror"))
     n.add_argument("--ca-bundle", help=t("net.ca_bundle"))
     n.add_argument("--insecure", action="store_true", help=t("net.insecure"))

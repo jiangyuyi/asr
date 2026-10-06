@@ -41,6 +41,7 @@ ZH: dict[str, str] = {
     "range.set_start": "起点 = 当前位置",
     "range.set_end": "终点 = 当前位置",
     "play": "▶ 播放",
+    "pause": "❚❚ 暂停",
     # ---- options
     "section.options": "识别选项",
     "opt.preroll": "预读",
@@ -314,6 +315,7 @@ EN: dict[str, str] = {
     "range.set_start": "Start = playhead",
     "range.set_end": "End = playhead",
     "play": "▶ Play",
+    "pause": "❚❚ Pause",
     "section.options": "Recognition options",
     "opt.preroll": "Preroll",
     "opt.preroll_suffix": " s",
@@ -580,6 +582,7 @@ JA: dict[str, str] = {
     "range.set_start": "開始 = 再生位置",
     "range.set_end": "終了 = 再生位置",
     "play": "▶ 再生",
+    "pause": "❚❚ 一時停止",
     "section.options": "認識オプション",
     "opt.preroll": "先読み",
     "opt.preroll_suffix": " 秒",

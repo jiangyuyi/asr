@@ -25,6 +25,9 @@ HF = "https://huggingface.co/FunAudioLLM"
 # without a VPN. Used as a fallback when HuggingFace is blocked, slow, or
 # intercepted by a TLS-inspecting proxy.
 MS = "https://modelscope.cn/models"
+# Third fallback for China: hf-mirror is a full read-only mirror of
+# HuggingFace and usually answers when both of the above are slow.
+HFM = "https://hf-mirror.com/FunAudioLLM"
 
 
 @dataclass(frozen=True)
@@ -33,18 +36,28 @@ class ModelFile:
     filename: str
     size: int  # bytes
     mirror_url: str = ""   # same bytes, alternate host
+    # Extra hosts tried after the two above. Empty for runtime archives, which
+    # only ever exist on GitHub.
+    extra_urls: tuple[str, ...] = ()
     # Optional. The ASR weights were pinned by size only; translation weights
-    # are 100-210 MB, where a truncated download that still passes the size
+    # are 100-490 MB, where a truncated download that still passes the size
     # check is worth catching.
     sha256: str = ""
 
     def sources(self, mirror: str = "auto") -> list[str]:
-        """URLs to try, in order, honouring the user's mirror preference."""
+        """URLs to try, in order, honouring the user's mirror preference.
+
+        Pinning a mirror means *only* that mirror — a user in a network where
+        huggingface.co is blackholed should not silently get sent there again
+        because it happens to be listed first.
+        """
         if mirror == "huggingface":
             return [self.url]
-        if mirror == "modelscope" and self.mirror_url:
-            return [self.mirror_url]
-        return [self.url, self.mirror_url] if self.mirror_url else [self.url]
+        if mirror == "modelscope":
+            return [self.mirror_url] if self.mirror_url else [self.url]
+        if mirror == "hf-mirror":
+            return list(self.extra_urls) or [self.url]
+        return [u for u in (self.url, self.mirror_url, *self.extra_urls) if u]
 
 
 @dataclass(frozen=True)
@@ -83,8 +96,12 @@ class ModelSpec:
 
 VAD_FILE = ModelFile(f"{HF}/fsmn-vad-GGUF/resolve/main/fsmn-vad.gguf",
                      "fsmn-vad.gguf", 1_720_512,
-                     mirror_url=f"{MS}/FunAudioLLM/fsmn-vad-GGUF/resolve/master/fsmn-vad.gguf")
+                     mirror_url=f"{MS}/FunAudioLLM/fsmn-vad-GGUF/resolve/master/fsmn-vad.gguf",
+                     extra_urls=(f"{HFM}/fsmn-vad-GGUF/resolve/main/fsmn-vad.gguf",),
+                     sha256="1270f2559c495f4e7b6e739541151027d360761a3fda43fc147034f5719f5479")
 
+# sha256 来自 HuggingFace 的 LFS 元数据（API ?blobs=true）。有校验和之后，
+# 下载中途断流不会被当成成功——以前只比对大小，缺 100 MB 的权重也照样装上了。
 NANO = ModelSpec(
     key="nano",
     label="Nano（质量档·推荐）",
@@ -96,10 +113,14 @@ NANO = ModelSpec(
     files=(
         ModelFile(f"{HF}/Fun-ASR-Nano-GGUF/resolve/main/funasr-encoder-f16.gguf",
                   "funasr-encoder-f16.gguf", 469_331_008,
-                  mirror_url=f"{MS}/FunAudioLLM/Fun-ASR-Nano-GGUF/resolve/master/funasr-encoder-f16.gguf"),
+                  mirror_url=f"{MS}/FunAudioLLM/Fun-ASR-Nano-GGUF/resolve/master/funasr-encoder-f16.gguf",
+                  extra_urls=(f"{HFM}/Fun-ASR-Nano-GGUF/resolve/main/funasr-encoder-f16.gguf",),
+                  sha256="f92f91d01a24fbed6c863495b2ee8c6a6788144a02858b75743f0946668de8a2"),
         ModelFile(f"{HF}/Fun-ASR-Nano-GGUF/resolve/main/qwen3-0.6b-q4km.gguf",
                   "qwen3-0.6b-q4km.gguf", 484_219_776,
-                  mirror_url=f"{MS}/FunAudioLLM/Fun-ASR-Nano-GGUF/resolve/master/qwen3-0.6b-q4km.gguf"),
+                  mirror_url=f"{MS}/FunAudioLLM/Fun-ASR-Nano-GGUF/resolve/master/qwen3-0.6b-q4km.gguf",
+                  extra_urls=(f"{HFM}/Fun-ASR-Nano-GGUF/resolve/main/qwen3-0.6b-q4km.gguf",),
+                  sha256="cc5057552aa9dddedcda73ea8889854e8a257eb07d0a561b7234465c1e856f22"),
         VAD_FILE,
     ),
 )
@@ -114,7 +135,9 @@ PARAFORMER = ModelSpec(
     files=(
         ModelFile(f"{HF}/Paraformer-GGUF/resolve/main/paraformer-q8.gguf",
                   "paraformer-q8.gguf", 236_929_024,
-                  mirror_url=f"{MS}/FunAudioLLM/Paraformer-GGUF/resolve/master/paraformer-q8.gguf"),
+                  mirror_url=f"{MS}/FunAudioLLM/Paraformer-GGUF/resolve/master/paraformer-q8.gguf",
+                  extra_urls=(f"{HFM}/Paraformer-GGUF/resolve/main/paraformer-q8.gguf",),
+                  sha256="42bf76ea1575a336aaca4c1b7c01a82b79113e6d04d0d6b799561bfcf07ee011"),
         VAD_FILE,
     ),
 )
@@ -130,7 +153,9 @@ SENSEVOICE = ModelSpec(
     files=(
         ModelFile(f"{HF}/SenseVoiceSmall-GGUF/resolve/main/sensevoice-small-q8.gguf",
                   "sensevoice-small-q8.gguf", 254_208_320,
-                  mirror_url=f"{MS}/FunAudioLLM/SenseVoiceSmall-GGUF/resolve/master/sensevoice-small-q8.gguf"),
+                  mirror_url=f"{MS}/FunAudioLLM/SenseVoiceSmall-GGUF/resolve/master/sensevoice-small-q8.gguf",
+                  extra_urls=(f"{HFM}/SenseVoiceSmall-GGUF/resolve/main/sensevoice-small-q8.gguf",),
+                  sha256="4ae45c94422de949b387e2e0fb10d7e14e4c42c69db30c3444ecc7d4b844b7c5"),
         VAD_FILE,
     ),
 )

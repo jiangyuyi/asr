@@ -22,6 +22,7 @@ MIRRORS = [
     ("auto", "net.mirror_auto"),
     ("huggingface", "net.mirror_hf"),
     ("modelscope", "net.mirror_ms"),
+    ("hf-mirror", "net.mirror_hfm"),
 ]
 
 
