@@ -11,10 +11,11 @@ from asr_mm import catalog, export  # noqa: E402
 from asr_mm.srt import Cue  # noqa: E402
 from asr_mm.transcribe import Segment  # noqa: E402
 
+# 虚构的示例句。不要替换成真实课堂录像的转写内容——这些字符串会进公开仓库。
 CUES = [
-    Cue(15.3, 25.3, "（课堂内容，略）"),
-    Cue(27.35, 37.35, "请把这份材料复印三份，其中一部分留给我自己用。"),
-    Cue(37.35, 44.98, "上面的一些问题是供大家参考的。"),
+    Cue(15.3, 25.3, "请把这份材料复印三份，其中一部分留给我自己用。"),
+    Cue(27.35, 37.35, "因为前面那条路正在维修，公交车今天临时改道绕行。"),
+    Cue(37.35, 44.98, "你觉得这个价格合理吗？如果不合适可以再商量。"),
 ]
 SEGMENTS = [Segment(c.start, c.end, c.text) for c in CUES]
 PAYLOAD = {"source": "v.mp4", "segments": []}

@@ -29,7 +29,7 @@ def say(m=""):
     OUT.write_text("\n".join(lines), encoding="utf-8")
 
 
-VIDEO = ROOT / "课堂录像示例.mp4"
+VIDEO = ROOT / "samples/课堂录像示例.mp4"
 
 # --- make the load slow, in this process only -------------------------------
 _real_probe = media.probe

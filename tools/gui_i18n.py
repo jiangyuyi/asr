@@ -13,7 +13,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 from asr_mm import i18n  # noqa: E402
 from asr_mm.gui.app import MainWindow  # noqa: E402
 
-VIDEO = r"D:\Work\asr_mm\课堂录像示例.mp4"
+VIDEO = r"D:\Work\asr_mm\samples/课堂录像示例.mp4"
 SHOTS = Path(r"D:\Work\asr_mm\tools\shots")
 SHOTS.mkdir(parents=True, exist_ok=True)
 LOG = Path(r"D:\Work\asr_mm\tools\gui_i18n.txt")

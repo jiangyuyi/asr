@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 DIST = Path(r"D:\Work\asr_mm\dist\asr-mm\asr-mm.exe")
-VIDEO = r"D:\Work\asr_mm\课堂录像示例.mp4"
+VIDEO = r"D:\Work\asr_mm\samples/课堂录像示例.mp4"
 MODELS = r"D:\Work\asr_mm\.asrhome\models"
 LOG = Path(r"D:\Work\asr_mm\tools\dist_test.txt")
 

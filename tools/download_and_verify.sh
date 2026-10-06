@@ -43,7 +43,7 @@ echo "--- version ---"
 echo
 echo "--- transcribe (models from local cache) ---"
 ASR_MM_HOME=/d/Work/asr_mm/.asrhome "$EXE" transcribe \
-  "/d/Work/asr_mm/课堂录像示例.mp4" \
+  "/d/Work/asr_mm/samples/课堂录像示例.mp4" \
   -s 00:00:27 -e 00:00:38 --stdout --output-format srt --no-summary
 
 rm -rf "$TMP"

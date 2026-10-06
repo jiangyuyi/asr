@@ -106,7 +106,7 @@ check("reports certificate issuers", "签发者" in out)
 check("all sources reachable", out.count("[OK") == 3, f"{out.count('[OK')}")
 
 r = subprocess.run([str(exe), "--lang", "ja", "transcribe",
-                    str(ROOT / "课堂录像示例.mp4"),
+                    str(ROOT / "samples/课堂录像示例.mp4"),
                     "-s", "00:00:15", "-e", "00:00:30", "--stdout",
                     "--output-format", "srt", "--no-summary"],
                    capture_output=True, env=env, timeout=900)

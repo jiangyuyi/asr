@@ -13,7 +13,7 @@ from pathlib import Path
 ROOT = Path(r"D:\Work\asr_mm")
 TMP = Path(tempfile.mkdtemp(prefix="asr-mm-140-"))
 LOG = ROOT / "tools" / "final_140.txt"
-VIDEO = ROOT / "课堂录像示例.mp4"
+VIDEO = ROOT / "samples/课堂录像示例.mp4"
 TAG = "v1.4.0"
 
 lines: list[str] = []

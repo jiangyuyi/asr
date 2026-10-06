@@ -15,7 +15,7 @@ from pathlib import Path
 ROOT = Path(r"D:\Work\asr_mm")
 TMP = Path(r"D:\Work\asr_mm\tools\_verify110")
 LOG = ROOT / "tools" / "verify_110.txt"
-VIDEO = ROOT / "课堂录像示例.mp4"
+VIDEO = ROOT / "samples/课堂录像示例.mp4"
 GH = ["gh", "release", "download", "v1.1.0", "-D", str(TMP), "--clobber"]
 
 out: list[str] = []

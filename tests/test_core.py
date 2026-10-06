@@ -104,7 +104,8 @@ def test_short_noise_cue_is_flagged():
 
 
 def test_normal_cue_is_not_flagged():
-    assert transcribe._flag(srt.Cue(0.0, 10.0, "大家一起讨论啊。"), 0.0).suspicious is False
+    # 虚构句子：内容会进公开仓库，不要用真实课堂录像的转写
+    assert transcribe._flag(srt.Cue(0.0, 10.0, "这道题我们接下来一起讨论。"), 0.0).suspicious is False
     assert transcribe._flag(srt.Cue(0.0, 0.5, "他也没"), 0.0).suspicious is False
 
 

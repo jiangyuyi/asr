@@ -12,7 +12,7 @@ sys.path.insert(0, str(ROOT))
 from asr_mm import export, transcribe  # noqa: E402
 from asr_mm.i18n import set_language  # noqa: E402
 
-VIDEO = ROOT / "课堂录像示例.mp4"
+VIDEO = ROOT / "samples/课堂录像示例.mp4"
 OUT = ROOT / "tools" / "export_demo"
 LOG = ROOT / "tools" / "export_demo.txt"
 

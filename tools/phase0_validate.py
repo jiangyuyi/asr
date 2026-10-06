@@ -22,7 +22,7 @@ VENDOR = os.path.join(ROOT, "vendor")
 MODELS = os.path.join(VENDOR, "models")
 BIN = os.path.join(VENDOR, "avx2")
 WORK = os.path.join(ROOT, "tools", "phase0")
-VIDEO = os.path.join(ROOT, "课堂录像示例.mp4")
+VIDEO = os.path.join(ROOT, "samples/课堂录像示例.mp4")
 
 os.makedirs(WORK, exist_ok=True)
 

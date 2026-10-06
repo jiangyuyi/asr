@@ -22,7 +22,7 @@ from pathlib import Path
 ROOT = Path(r"D:\Work\asr_mm")
 MODELS = ROOT / ".asrhome" / "models"
 RUNTIME = ROOT / ".asrhome" / "runtime"
-SRC = ROOT / "课堂录像示例.mp4"
+SRC = ROOT / "samples/课堂录像示例.mp4"
 WORK = ROOT / "tools" / "enc_stress"
 LOG = ROOT / "tools" / "enc_stress.txt"
 

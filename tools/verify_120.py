@@ -12,7 +12,7 @@ from pathlib import Path
 ROOT = Path(r"D:\Work\asr_mm")
 TMP = ROOT / "tools" / "_verify120"
 LOG = ROOT / "tools" / "verify_120.txt"
-VIDEO = ROOT / "课堂录像示例.mp4"
+VIDEO = ROOT / "samples/课堂录像示例.mp4"
 TAG = "v1.2.0"
 
 out: list[str] = []

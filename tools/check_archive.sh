@@ -22,12 +22,12 @@ EXE="$TMP/asr-mm/asr-mm.exe"
 # Point the model cache at the already-downloaded set so we exercise the real
 # path without a 900 MB download.
 ASR_MM_HOME=/d/Work/asr_mm/.asrhome "$EXE" doctor \
-  "/d/Work/asr_mm/课堂录像示例.mp4" 2>&1 | tail -12
+  "/d/Work/asr_mm/samples/课堂录像示例.mp4" 2>&1 | tail -12
 
 echo
 echo "=== transcribe from the extracted copy ==="
 ASR_MM_HOME=/d/Work/asr_mm/.asrhome "$EXE" transcribe \
-  "/d/Work/asr_mm/课堂录像示例.mp4" \
+  "/d/Work/asr_mm/samples/课堂录像示例.mp4" \
   -s 00:00:15 -e 00:00:30 --stdout --output-format srt --no-summary
 
 rm -rf "$TMP"

@@ -222,7 +222,7 @@ MT_MODELS: dict[str, MTModelSpec] = {
     # OPUS-MT 没有简中↔日的语言对：唯一的中日检查点 opus-mt-tc-big-zh-ja
     # 发布的词表里没有中文（用 HuggingFace 自己的 tokenizer，14 个 token 里 6 个
     # 变 <unk>）。zh->en->ja 中转也实测不可用——opus-mt-en-jap 是文学语料，
-    # 「大家一起讨论」会译成「弟子たちは互に語り合うべきである」。M2M100 直译。
+    # 口语化的课堂句子会被译成书面敬语。M2M100 直译。
     "ja": MTModelSpec(
         key="ja", target="日本語", dir_name="mt-ja", files=MT_JA_FILES,
         kind="m2m100", spm_file="sentencepiece.bpe.model",

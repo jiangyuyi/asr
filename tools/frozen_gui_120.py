@@ -13,7 +13,7 @@ from pathlib import Path
 
 ROOT = Path(r"D:\Work\asr_mm")
 EXE = ROOT / "dist" / "asr-mm-gui" / "asr-mm-gui.exe"
-VIDEO = ROOT / "课堂录像示例.mp4"
+VIDEO = ROOT / "samples/课堂录像示例.mp4"
 LOG = ROOT / "tools" / "frozen_gui_120.txt"
 
 out: list[str] = []

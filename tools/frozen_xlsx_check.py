@@ -19,7 +19,7 @@ DIST = ROOT / "dist" / "asr-mm"
 EXE = DIST / "asr-mm.exe"
 GUI = ROOT / "dist" / "asr-mm-gui" / "asr-mm-gui.exe"
 LOG = ROOT / "tools" / "frozen_xlsx.txt"
-VIDEO = ROOT / "课堂录像示例.mp4"
+VIDEO = ROOT / "samples/课堂录像示例.mp4"
 
 lines: list[str] = []
 fails: list[str] = []

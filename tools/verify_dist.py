@@ -40,7 +40,7 @@ say("\n=== launching packaged GUI ===")
 env = dict(os.environ)
 env["ASR_MM_HOME"] = str(ROOT / ".asrhome")
 proc = subprocess.Popen([str(ROOT / "dist" / "asr-mm-gui" / "asr-mm-gui.exe"),
-                         str(ROOT / "课堂录像示例.mp4")],
+                         str(ROOT / "samples/课堂录像示例.mp4")],
                         env=env)
 say(f"pid = {proc.pid}")
 time.sleep(14)

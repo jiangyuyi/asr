@@ -50,7 +50,7 @@ for e in ("llama-funasr-cli.exe", "llama-funasr-paraformer.exe",
           "llama-funasr-sensevoice.exe", "llama-funasr-vad.exe"):
     shutil.copy2(src_runtime / e, JP_HOME / "runtime" / e)
 
-VIDEO = ROOT / "课堂录像示例.mp4"
+VIDEO = ROOT / "samples/课堂录像示例.mp4"
 env = dict(os.environ)
 env["ASR_MM_HOME"] = str(JP_HOME)
 env["PYTHONIOENCODING"] = "utf-8"

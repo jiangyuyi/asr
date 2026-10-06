@@ -186,7 +186,7 @@ def main() -> int:
 
     # ---- 5. 真实转写 + 翻译 + 导出
     print("\n--- 5. 端到端：转写 + 翻译 + 导出 ---")
-    video = ROOT / "课堂录像示例.mp4"
+    video = ROOT / "samples/课堂录像示例.mp4"
     if not (HOME / "runtime").exists():
         print("\n--- 5. 端到端：跳过（缺识别运行时）---")
     elif video.exists():

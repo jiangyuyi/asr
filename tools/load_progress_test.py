@@ -29,7 +29,7 @@ def say(m=""):
     OUT.write_text("\n".join(lines), encoding="utf-8")
 
 
-SMALL = ROOT / "课堂录像示例.mp4"
+SMALL = ROOT / "samples/课堂录像示例.mp4"
 BIG = ROOT / "tools" / "big_sample.mp4"
 JP = ROOT / "tools" / "日本語" / "テスト動画.avi"
 

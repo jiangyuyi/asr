@@ -6,7 +6,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from run_cli import LOG, run  # noqa: E402
 
-VIDEO = r"D:\Work\asr_mm\课堂录像示例.mp4"
+VIDEO = r"D:\Work\asr_mm\samples/课堂录像示例.mp4"
 OUT = r"D:\Work\asr_mm\tools\e2e"
 os.makedirs(OUT, exist_ok=True)
 

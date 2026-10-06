@@ -116,3 +116,5 @@ build_verify_out/
 build_verify_out2/
 build_dl/
 tools/final_150.txt
+samples/
+.venv-shot/
