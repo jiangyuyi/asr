@@ -13,6 +13,8 @@
 |---|---|
 | ![日本語](docs/screenshot-ja.png) | ![English](docs/screenshot-en.png) |
 
+各版本的变化见 [CHANGELOG.md](CHANGELOG.md)。
+
 ---
 
 ## 为什么这么做
