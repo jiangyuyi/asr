@@ -244,16 +244,17 @@ MT_MODELS: dict[str, MTModelSpec] = {
         key="en", target="English", dir_name="mt-en", files=MT_EN_FILES,
         kind="marian", spm_file="source.spm",
         note="OPUS-MT 中译英。语料以通用书面语为主，课堂短句译得干净。"),
-    # OPUS-MT 没有简中↔日的语言对：唯一的中日检查点 opus-mt-tc-big-zh-ja
-    # 发布的词表里没有中文（用 HuggingFace 自己的 tokenizer，14 个 token 里 6 个
-    # 变 <unk>）。zh->en->ja 中转也实测不可用——opus-mt-en-jap 是文学语料，
-    # 口语化的课堂句子会被译成书面敬语。M2M100 直译。
+    # OPUS-MT 没有简中↔日的语言对，唯一的中日检查点 opus-mt-tc-big-zh-ja
+    # 的词表其实是有中文的（实测 52 个 token 零 <unk>），排除它只能靠实际输出；
+    # zh->en->ja 中转也实测不可用——opus-mt-en-jap 是文学语料，口语句会被译成
+    # 书面敬语。M2M100 直译。
+    # 详见 docs/TRANSLATION.md。
     "ja": MTModelSpec(
         key="ja", target="日本語", dir_name="mt-ja", files=MT_JA_FILES,
         kind="m2m100", spm_file="sentencepiece.bpe.model",
         src_lang="__zh__", strip_spaces=True,
         note="M2M100-418M 中译日。质量弱于英文：能读懂但偶有实错"
-             "（3つのコピーして），建议人工复核。"),
+             "（动词「复印」被当成名词，译成「3つのコピーして」），建议人工复核。"),
 }
 
 MT_DEFAULT_TARGETS = ("en", "ja")

@@ -9,11 +9,16 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
+
+# 解码退化时输出会变成 `午午午午…`、`cop cop cop…` 这种形态。直接找「同一
+# 子串连续出现三次以上」，比盯某个具体词更稳——探针句改了也不会失效。
+_REPEAT = re.compile(r"(.+?)\1{2,}", re.UNICODE)
 
 ROOT = Path(__file__).resolve().parent.parent
 HOME = ROOT / "build_verify_home"
@@ -121,8 +126,8 @@ def main() -> int:
 
     # ---- 3. 用下载来的模型真翻译
     print("\n--- 3. 用刚下载的模型翻译 ---")
-    probe = ["这批设备的保修期是两年，过期之后需要重新购买。",
-             "今天的会议改到明天下午三点钟，请通知一下所有参加的人。",
+    probe = ["今天的会议改到明天下午三点钟，请通知一下所有参加的人。",
+             "请把这份材料复印三份，其中一份留给我自己用。",
              "你觉得这个价格合理吗？如果不合适可以再商量。"]
     script = (
         "import sys; sys.path.insert(0, r'%s')\n"
@@ -142,9 +147,12 @@ def main() -> int:
     if p.returncode != 0:
         print(p.stderr[-600:])
     check("翻译成功", p.returncode == 0)
-    good = ("rescheduled" in p.stdout
-            and "equation" in p.stdout
-            and "Why?" in p.stdout)
+    # 光看关键词在不在，判断不了复读——复读的译文照样含这些词，所以用正则。
+    _hit_en = _REPEAT.search(p.stdout)
+    good = (_hit_en is None
+            and "rescheduled" in p.stdout
+            and "three copies" in p.stdout
+            and "reasonable" in p.stdout)
     check("译文质量达标（无复读）", good, p.stdout.replace("\n", " ")[:120])
 
     # ---- 4. 日文模型（大文件，单独确认可下载与校验）
@@ -181,8 +189,9 @@ def main() -> int:
     if p.returncode != 0:
         print(p.stderr[-600:])
     check("日文翻译成功", p.returncode == 0)
-    check("日文无复读", p.stdout.count("保修期") <= 2 and len(p.stdout) < 400,
-          f"{len(p.stdout)} 字符")
+    check("日文无复读", _hit is None and len(p.stdout) < 400,
+          f"{len(p.stdout)} 字符"
+          + (f"，复读 {_hit.group(1)[:20]!r}" if _hit else ""))
 
     # ---- 5. 真实转写 + 翻译 + 导出
     print("\n--- 5. 端到端：转写 + 翻译 + 导出 ---")

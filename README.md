@@ -130,18 +130,21 @@ asr-mm mt download en                   # 只下英文
 asr-mm transcribe v.mp4 -f xlsx --translate en,ja
 ```
 
-**日文质量弱于英文，需要人工复核。** 下面是构建时质量闸门用的示例句（虚构，非真实课堂内容）：
+**日文质量弱于英文，需要人工复核。** 下面是构建时质量闸门用的示例句（虚构内容）：
 
 ```
-因为前面那条路正在维修，公交车今天临时改道绕行。
-  EN  Because water is more dense than air, objects float or sink.   ✓
-  JA  この材料を3枚コピーしてください。   ✓
-这批设备的保修期是两年，过期之后需要重新购买。
-  EN  The meeting has been moved to 3 p.m. tomorrow.            ✓
-  JA  この装置の保証期間は2年です。                                ✗ 动词当名词
+请把这份材料复印三份，其中一份留给我自己用。
+  EN  Please make three copies of this material, one of which is for me.   ✓
+  JA  この材料を3つのコピーして、そのうちの1つは私自身のために残します。   ✗
+今天的会议改到明天下午三点钟，请通知一下所有参加的人。
+  EN  Today's meeting has been rescheduled to 3 p.m. tomorrow, so please
+      inform all participants.                                            ✓
+  JA  今日の会議は明日の午後3時まで変更され、参加者全員に通知してください。 ✓
 ```
 
-会出实错（`面積`→`表面公式`、`翻到`→`翻訳`），句式也偏书面。
+日文会出**实错**——上面第一句的动词「复印」被当成了名词，译成
+`3つのコピーして`，正确应该是 `3部コピーしてください`。这类错误读得通
+但语法是错的，所以重要场合必须复核。
 
 > **日文模型是 CC-BY-NC，禁止商用。** 学校教学、非营利用途没问题；
 > 放进任何收费产品前请先确认。英文模型是可商用的。
