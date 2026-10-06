@@ -128,3 +128,48 @@ def test_video_widget_has_no_stylesheet(win):
         f"QVideoWidget 上挂了样式表，会挡住视频表面: {win.video.styleSheet()!r}")
     assert "border-radius" in win.video_frame.styleSheet(), \
         "圆角边框应该放在外层容器上"
+
+
+def test_poster_is_not_stretched_into_a_black_band(win):
+    """海报不该被拉成"窄条 + 大片底色"。
+
+    原来 drop 标签横向铺满整个左栏，而 4:3 的封面只占中间，两侧全是底色；
+    窗口最大化时那两侧比画面本身大得多，整个预览区读起来就是黑屏。
+    """
+    assert win.drop.width() <= 560, (
+        f"占位/海报标签太宽，海报只占中间一条: {win.drop.width()}px")
+    # 底色不能是纯黑——黑封面和黑底就分不出来了
+    assert "#000" not in win.drop.styleSheet(), \
+        f"占位底色不应是纯黑: {win.drop.styleSheet()!r}"
+
+
+def test_black_poster_is_rejected_with_a_message(win, tmp_path, monkeypatch):
+    """抽出来的封面是全黑时，宁可显示占位提示也不要显示一片黑。"""
+    from PySide6.QtGui import QImage
+    from PySide6.QtCore import Qt as _Qt
+    black = QImage(64, 48, QImage.Format.Format_RGB32)
+    black.fill(_Qt.GlobalColor.black)
+    p = tmp_path / "black.jpg"
+    black.save(str(p), "JPG")
+
+    i18n.set_language("zh")
+    win._poster_pixmap = None
+    win._show_poster(p)
+    assert win._poster_pixmap is None, "全黑封面不该被当成有效海报"
+    assert win.drop.text() == t("drop.hint"), "应该退回占位提示"
+    assert t("status.poster_black") in win.statusBar().currentMessage(), \
+        f"状态栏应说明封面是黑的: {win.statusBar().currentMessage()!r}"
+
+
+def test_black_detector():
+    from PySide6.QtCore import Qt as _Qt
+    from PySide6.QtGui import QImage, QPixmap
+    from asr_mm.gui.app import _is_black_pixmap
+
+    dark = QImage(64, 48, QImage.Format.Format_RGB32)
+    dark.fill(_Qt.GlobalColor.black)
+    assert _is_black_pixmap(QPixmap.fromImage(dark)) is True
+
+    bright = QImage(64, 48, QImage.Format.Format_RGB32)
+    bright.fill(_Qt.GlobalColor.white)
+    assert _is_black_pixmap(QPixmap.fromImage(bright)) is False

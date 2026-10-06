@@ -43,6 +43,24 @@ def tc(seconds: float) -> str:
     return format_ts(max(0.0, seconds), comma=False)
 
 
+def _is_black_pixmap(pix, threshold: int = 26) -> bool:
+    """True when a frame carries essentially no image content.
+
+    Sampled from a small scaled copy so this costs nothing even for 4K frames.
+    Used to catch a poster that came back black instead of displaying a void.
+    """
+    small = pix.scaled(32, 32)
+    img = small.toImage()
+    lit = 0
+    for y in range(img.height()):
+        for x in range(img.width()):
+            c = img.pixel(x, y)
+            if (c >> 16 & 0xFF) > threshold or (c >> 8 & 0xFF) > threshold \
+                    or (c & 0xFF) > threshold:
+                lit += 1
+    return lit < img.width() * img.height() * 0.02
+
+
 class DropVideoLabel(QLabel):
     """Click-to-browse tile shown until a video is loaded."""
 
@@ -158,11 +176,17 @@ class MainWindow(QMainWindow):
         split = QSplitter(Qt.Horizontal)
 
         left = QWidget()
+        # 预览区按 4:3 限宽。放任它随窗口横向拉长的话，4:3 的封面/画面只占
+        # 中间一小条，两侧全是底色——最大化窗口时那两侧比画面本身大得多，
+        # 看起来就像黑屏。
+        left.setMaximumWidth(760)
         ll = QVBoxLayout(left)
         ll.setContentsMargins(0, 0, 0, 0)
         self.drop = DropVideoLabel()
         self.drop.clicked.connect(self.choose_video)
-        ll.addWidget(self.drop)
+        # 只占自身最小宽度并水平居中：让它横向铺满的话，4:3 的封面在两侧留出
+        # 一大片底色，看起来就像黑屏。
+        ll.addWidget(self.drop, 0, Qt.AlignHCenter)
 
         # QVideoWidget 自己**不能加样式表**。Qt 的 QStyleSheetStyle 会接管
         # 绘制，把原生视频表面挡住，结果就是一个纯黑矩形——解码明明在跑
@@ -651,12 +675,29 @@ class MainWindow(QMainWindow):
         pix = QPixmap(str(poster))
         if pix.isNull():
             return
+        if _is_black_pixmap(pix):
+            # A black poster is worse than no poster: it reads as "the app is
+            # broken". Keep the hint tile and say so instead of showing a void.
+            self._poster_pixmap = None
+            self.video.hide()
+            # 顺序要紧：setPixmap(空) 会把 QLabel 的文字一起清掉，
+            # 所以先清 pixmap 再写提示文字。
+            self.drop.setPixmap(QPixmap())
+            self.drop.setText(t("drop.hint"))
+            self.drop.setStyleSheet(
+                "border: 2px dashed #b9c0cc; border-radius: 10px;"
+                "color:#6b7280; background:#fafbfc; font-size:15px;")
+            self.drop.show()
+            self.statusBar().showMessage(t("status.poster_black"))
+            return
         self._poster_pixmap = pix
         self.video.hide()
         self.drop.setText("")
         self.drop.setPixmap(pix.scaled(
             self.drop.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
-        self.drop.setStyleSheet("border-radius:10px; background:#000;")
+        # 深灰而不是纯黑：4:3 的封面在宽屏里只占中间一小条，纯黑底会让
+        # 整个预览区读起来像"黑屏"，深灰能让"有没有画面"一眼可辨。
+        self.drop.setStyleSheet("border-radius:10px; background:#20242b;")
         self.drop.show()
 
     def _toggle_play(self) -> None:

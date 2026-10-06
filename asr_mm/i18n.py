@@ -88,6 +88,7 @@ ZH: dict[str, str] = {
     "status.copied": "已复制全文到剪贴板",
     "status.exported": "已导出 {path}",
     "status.exported_clip": "已导出片段 {path}",
+    "status.poster_black": "封面帧是全黑的，已改用占位提示（转写不受影响）。",
     "status.preview_stuck": "画面无法播放：已暂停并显示封面帧。不影响转写，可用时间框选区间。",
     "status.preview_failed": "该格式无法在系统播放器中预览（{error}）。不影响转写，可直接用时间输入框选择区间。",
     # ---- dialogs
@@ -359,6 +360,7 @@ EN: dict[str, str] = {
     "status.copied": "Transcript copied to clipboard",
     "status.exported": "Exported {path}",
     "status.exported_clip": "Clip exported to {path}",
+    "status.poster_black": "The poster frame came back black, so the placeholder is shown instead (transcription is unaffected).",
     "status.preview_stuck": "Playback never started; paused and showing the poster frame. Transcription is unaffected — pick the range with the time fields.",
     "status.preview_failed": "The system player cannot preview this format ({error}). Transcription is unaffected; pick the range with the time fields.",
     "dlg.cannot_open": "Cannot open",
@@ -627,6 +629,7 @@ JA: dict[str, str] = {
     "status.copied": "全文をクリップボードにコピーしました",
     "status.exported": "{path} に書き出しました",
     "status.exported_clip": "区間動画を {path} に書き出しました",
+    "status.poster_black": "表紙フレームが真っ黒だったため、プレースホルダーを表示しています（文字起こしには影響しません）。",
     "status.preview_stuck": "再生が始まりませんでした。一時停止し表紙フレームを表示しています。文字起こしには影響しません。時刻欄で範囲を指定してください。",
     "status.preview_failed": "この形式はシステムプレーヤーで再生できません（{error}）。文字起こしには影響しません。時刻欄で範囲を指定してください。",
     "dlg.cannot_open": "開けません",
