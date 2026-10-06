@@ -143,6 +143,32 @@ def test_poster_is_not_stretched_into_a_black_band(win):
         f"占位底色不应是纯黑: {win.drop.styleSheet()!r}"
 
 
+def test_poster_mode_hides_the_whole_video_container(win, tmp_path):
+    """显示海报时，播放容器必须**整体**收起。
+
+    只藏里面的 QVideoWidget 的话，外层容器的底色会露在下面，恰好多出一整块
+    黑色——1.5.3 就是这么在海报下面留了一大片没用的黑区。
+    """
+    from PySide6.QtCore import Qt as _Qt
+    from PySide6.QtGui import QImage
+    img = QImage(64, 48, QImage.Format.Format_RGB32)
+    img.fill(_Qt.GlobalColor.darkGray)
+    p = tmp_path / "p.jpg"
+    img.save(str(p), "JPG")
+
+    win._show_poster(p)
+    assert win._poster_pixmap is not None
+    assert win.drop.isVisible(), "海报模式下占位标签应可见"
+    assert not win.video_frame.isVisible(), \
+        "海报模式下播放容器没有收起，下面会多出一块黑色"
+    assert not win.video.isVisible()
+
+    win._show_preview_video()
+    assert win.video_frame.isVisible(), "播放时容器必须露出来"
+    assert win.video.isVisible()
+    assert not win.drop.isVisible(), "播放时不该还留着海报"
+
+
 def test_black_poster_is_rejected_with_a_message(win, tmp_path, monkeypatch):
     """抽出来的封面是全黑时，宁可显示占位提示也不要显示一片黑。"""
     from PySide6.QtGui import QImage

@@ -200,7 +200,7 @@ class MainWindow(QMainWindow):
         self.video.setMinimumSize(480, 300)
         self.video.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         vf.addWidget(self.video)
-        self.video.hide()
+        self.video_frame.hide()
         # 撑满左栏。之前 addStretch(1) 把它挤在顶部、下面留一大片空白，
         # 4:3 的视频被缩成窄条，看着像没在播。
         ll.addWidget(self.video_frame, 1)
@@ -635,8 +635,7 @@ class MainWindow(QMainWindow):
         if loaded.poster is not None:
             self._show_poster(loaded.poster)
         else:
-            self.drop.hide()
-        self.video.show()
+            self._show_preview_video()
         # 海报先留着，等真的开始播了再撤掉。原来 setSource 之后就撤，
         # 万一视频表面没画出来，用户看到的就是一个纯黑矩形，没有任何提示。
         self._playing_started = False
@@ -661,13 +660,26 @@ class MainWindow(QMainWindow):
             self.player_ok = True
             self.btn_play.setEnabled(True)
             # 故意**不**在这里撤海报：只有确认画面真的在动才撤。
-            self.drop.show() if self._poster_pixmap is not None else self.video.show()
+            if self._poster_pixmap is not None:
+                self._show_preview_poster()
+            else:
+                self._show_preview_video()
+
+    # 预览区在「海报」和「播放」两种内容之间切换。两个都要**整体**切换：
+    # 只藏里面的 QVideoWidget 的话，外层容器的底色会露在下面，多出一整块黑色。
+    def _show_preview_poster(self) -> None:
+        self.video_frame.hide()
+        self.drop.show()
+
+    def _show_preview_video(self) -> None:
+        self.drop.hide()
+        self.video_frame.show()
+        self.video.show()
 
     def _hide_poster(self) -> None:
         """Swap the poster back out once the player takes over."""
         if self._poster_pixmap is not None:
-            self.drop.hide()
-            self.video.show()
+            self._show_preview_video()
 
     def _show_poster(self, poster: Path) -> None:
         """Display a poster frame in place of (or behind) the video widget."""
@@ -679,7 +691,7 @@ class MainWindow(QMainWindow):
             # A black poster is worse than no poster: it reads as "the app is
             # broken". Keep the hint tile and say so instead of showing a void.
             self._poster_pixmap = None
-            self.video.hide()
+            self.video_frame.hide()
             # 顺序要紧：setPixmap(空) 会把 QLabel 的文字一起清掉，
             # 所以先清 pixmap 再写提示文字。
             self.drop.setPixmap(QPixmap())
@@ -691,7 +703,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(t("status.poster_black"))
             return
         self._poster_pixmap = pix
-        self.video.hide()
+        self.video_frame.hide()
         self.drop.setText("")
         self.drop.setPixmap(pix.scaled(
             self.drop.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
@@ -726,7 +738,7 @@ class MainWindow(QMainWindow):
         self.player.pause()
         self._set_play_label(False)
         if self._poster_pixmap is not None:
-            self.drop.show()
+            self._show_preview_poster()
         self.statusBar().showMessage(t("status.preview_stuck"))
 
     def _set_play_label(self, playing: bool) -> None:
