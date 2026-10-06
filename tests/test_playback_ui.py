@@ -104,10 +104,27 @@ def test_video_widget_fills_the_pane(win):
     assert int(win.video.sizePolicy().horizontalPolicy().value) & grow
     assert int(win.video.sizePolicy().verticalPolicy().value) & grow
 
-    layout = win.video.parentWidget().layout()
-    idx = layout.indexOf(win.video)
-    assert idx >= 0, "视频控件不在左栏的布局里"
-    assert layout.stretch(idx) == 1, "视频控件没有拿到伸展权重"
-    # 顶部那个把视频挤上去的 stretch 必须已经去掉
-    tail = [layout.stretch(i) for i in range(idx + 1, layout.count())]
+    # 视频现在包在 video_frame 里，圆角边框挪到了外层（见下面那个用例）
+    inner = win.video.parentWidget().layout()
+    assert inner.count() == 1 and inner.itemAt(0).widget() is win.video, \
+        "视频控件应该独占外层容器"
+
+    outer = win.video_frame.parentWidget().layout()
+    oidx = outer.indexOf(win.video_frame)
+    assert oidx >= 0, "视频容器不在左栏的布局里"
+    assert outer.stretch(oidx) == 1, "视频容器没有拿到伸展权重"
+    tail = [outer.stretch(i) for i in range(oidx + 1, outer.count())]
     assert all(v == 0 for v in tail), f"视频后面还有占位的 stretch: {tail}"
+
+
+def test_video_widget_has_no_stylesheet(win):
+    """QVideoWidget 上不能挂样式表。
+
+    Qt 的 QStyleSheetStyle 会接管绘制并挡住原生视频表面，结果是一个纯黑
+    矩形——解码明明在跑（播放头在涨），屏幕上却什么都没有。边框必须挪到
+    外层容器。
+    """
+    assert not win.video.styleSheet(), (
+        f"QVideoWidget 上挂了样式表，会挡住视频表面: {win.video.styleSheet()!r}")
+    assert "border-radius" in win.video_frame.styleSheet(), \
+        "圆角边框应该放在外层容器上"

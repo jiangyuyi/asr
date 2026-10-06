@@ -149,7 +149,11 @@ def transcribe(source: str | Path, *, start: str | float | None = None,
     req_start = max(0.0, min(req_start, duration))
     req_end = max(req_start, min(req_end, duration))
     if req_end - req_start < 0.05:
-        from .srt import format_ts
+        # 不要在这里再 `from .srt import format_ts`：那会让 format_ts 变成
+        # transcribe() 的局部变量，而上面的模块级 import 被遮蔽；这个局部绑定
+        # 只在走进本分支时才赋值，函数正常跑完时它是空的，后面 193 行那个
+        # genexpr 一旦被执行就抛
+        # "cannot access free variable 'format_ts'"。
         if raw_start >= duration or raw_end >= duration:
             raise ValueError(t("err.range_past_end", duration=format_ts(duration, comma=False),
                                start=format_ts(raw_start, comma=False),

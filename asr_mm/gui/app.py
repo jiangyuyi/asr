@@ -18,7 +18,7 @@ from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
-    QHBoxLayout, QHeaderView, QLabel, QMainWindow, QMenu, QMessageBox,
+    QFrame, QHBoxLayout, QHeaderView, QLabel, QMainWindow, QMenu, QMessageBox,
     QProgressBar, QPushButton, QSizePolicy, QSplitter,
     QTableWidget, QTableWidgetItem, QTimeEdit, QVBoxLayout, QWidget,
 )
@@ -164,14 +164,22 @@ class MainWindow(QMainWindow):
         self.drop.clicked.connect(self.choose_video)
         ll.addWidget(self.drop)
 
+        # QVideoWidget 自己**不能加样式表**。Qt 的 QStyleSheetStyle 会接管
+        # 绘制，把原生视频表面挡住，结果就是一个纯黑矩形——解码明明在跑
+        # （position 在涨），屏幕上却什么都没有。圆角边框放到外层容器上。
+        self.video_frame = QFrame()
+        self.video_frame.setStyleSheet(
+            "QFrame#videoFrame{background:#000;border-radius:8px;}")
+        vf = QVBoxLayout(self.video_frame)
+        vf.setContentsMargins(0, 0, 0, 0)
         self.video = QVideoWidget()
         self.video.setMinimumSize(480, 300)
         self.video.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.video.setStyleSheet("background:#000; border-radius:8px;")
+        vf.addWidget(self.video)
         self.video.hide()
         # 撑满左栏。之前 addStretch(1) 把它挤在顶部、下面留一大片空白，
         # 4:3 的视频被缩成窄条，看着像没在播。
-        ll.addWidget(self.video, 1)
+        ll.addWidget(self.video_frame, 1)
         split.addWidget(left)
 
         right = QWidget()
@@ -330,6 +338,13 @@ class MainWindow(QMainWindow):
         # 用户会以为没点上。
         self.player.playbackStateChanged.connect(
             lambda _s: self._sync_play_button())
+        # 按下播放后 3 秒还在原地 -> 判定为「画面这条路不通」，给出提示
+        self._play_mark = 0
+        self._playing_started = False
+        self._play_watch = QTimer(self)
+        self._play_watch.setSingleShot(True)
+        self._play_watch.setInterval(3000)
+        self._play_watch.timeout.connect(self._on_play_watch)
 
     def _section(self, title: str) -> QLabel:
         lab = QLabel(title)
@@ -595,8 +610,12 @@ class MainWindow(QMainWindow):
         # while the platform player works out the format.
         if loaded.poster is not None:
             self._show_poster(loaded.poster)
-        self.drop.hide()
+        else:
+            self.drop.hide()
         self.video.show()
+        # 海报先留着，等真的开始播了再撤掉。原来 setSource 之后就撤，
+        # 万一视频表面没画出来，用户看到的就是一个纯黑矩形，没有任何提示。
+        self._playing_started = False
         self.player.setSource(QUrl.fromLocalFile(str(path)))
         QTimer.singleShot(1200, lambda: self._confirm_playback(path))
         self.statusBar().showMessage(
@@ -617,7 +636,8 @@ class MainWindow(QMainWindow):
         else:
             self.player_ok = True
             self.btn_play.setEnabled(True)
-            self._hide_poster()
+            # 故意**不**在这里撤海报：只有确认画面真的在动才撤。
+            self.drop.show() if self._poster_pixmap is not None else self.video.show()
 
     def _hide_poster(self) -> None:
         """Swap the poster back out once the player takes over."""
@@ -647,9 +667,26 @@ class MainWindow(QMainWindow):
         if self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
             self.player.pause()
             self._set_play_label(False)
+            self._play_watch.stop()
         else:
             self.player.play()
             self._set_play_label(True)
+            self._play_mark = self.player.position()
+            self._play_watch.start()
+
+    def _on_play_watch(self) -> None:
+        """按了播放但播放头没动 —— 说明画面这条路真的不通。
+
+        这种情况以前只是留一个黑矩形加一个看着没反应的按钮。现在明确
+        告诉用户，并把海报放回去，至少还能看到视频内容。
+        """
+        if self.player.position() > self._play_mark + 200:
+            return                       # 已经在正常走了，只是这次回调晚了
+        self.player.pause()
+        self._set_play_label(False)
+        if self._poster_pixmap is not None:
+            self.drop.show()
+        self.statusBar().showMessage(t("status.preview_stuck"))
 
     def _set_play_label(self, playing: bool) -> None:
         self.btn_play.setText(t("pause") if playing else t("play"))
@@ -657,13 +694,23 @@ class MainWindow(QMainWindow):
 
     def _sync_play_button(self) -> None:
         """Correct the label from the real state (playback ended, error, …)."""
-        self._set_play_label(
-            self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState)
+        playing = (self.player.playbackState()
+                   == QMediaPlayer.PlaybackState.PlayingState)
+        if not playing:
+            self._play_watch.stop()
+        self._set_play_label(playing)
 
     def _on_position(self, pos: int) -> None:
         self.slider.setPlayhead(pos / 1000.0)
         if not self._syncing:
             self.statusBar().showMessage(t("status.position", tc=tc(pos / 1000.0)))
+        # 播放头真的动了 -> 画面这条路通，撤掉海报露出视频
+        if pos > self._play_mark + 200:
+            self._play_mark = pos
+            if not self._playing_started:
+                self._playing_started = True
+                self._play_watch.stop()
+                self._hide_poster()
 
     def _tick_playhead(self) -> None:
         if (self.player_ok
