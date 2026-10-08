@@ -18,6 +18,34 @@ import pytest
 
 from asr_mm import catalog, downloader
 
+# 我们承诺长期保留的 release。翻译模型的十个文件只手工上传一次，挂在其中
+# 一个上面——删掉它会让所有旧版本用户的模型下载直接 404，而且没人会立刻发现。
+KEPT_RELEASES = {"v1.5.4"}
+
+
+def test_translation_models_ride_on_a_release_we_keep():
+    """模型资产的宿主 release 必须在保留列表里。
+
+    这条曾经真的炸过：MT_VERSION 指着 v1.5.0，清理旧 release 时把那个 tag 一并
+    删掉，1.5.x 的用户从此下载翻译模型全是 404，而安装包本身照常工作。
+    """
+    assert catalog.MT_VERSION in KEPT_RELEASES, (
+        f"翻译模型挂在 {catalog.MT_VERSION}，但它不在保留列表 {KEPT_RELEASES} 里。"
+        f"删掉这个 release 会让所有用户的模型下载 404。")
+
+
+def test_translation_model_base_is_pinned_not_derived():
+    """MT_BASE 必须是写死的，不能由 __version__ 推出来。
+
+    CI 只构建四个安装包，模型文件是手工上传的；让 URL 跟着应用版本走，
+    意味着每发一版都要重新上传 ~579 MB，而且删任何一版都会打断旧版的下载。
+    """
+    from asr_mm import __version__
+    assert catalog.MT_VERSION in catalog.MT_BASE
+    assert __version__ not in catalog.MT_BASE, (
+        "模型下载 URL 不能跟着应用版本变——它指向的是手工上传的固定资产")
+    assert catalog.MT_VERSION.startswith("v")
+
 
 def test_every_asr_weight_declares_a_checksum():
     """没有 sha256 的权重等于放弃了第二道校验——这正是截断文件溜进来的原因。"""

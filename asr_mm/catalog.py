@@ -16,7 +16,18 @@ RUNTIME_BASE = f"https://github.com/modelscope/FunASR/releases/download/{RUNTIME
 # tools/prepare_mt_models.py and published as release assets rather than pulled
 # from a third-party repository: there is no public zh->ja conversion to borrow,
 # and hosting our own means one checksum we control instead of two we don't.
-MT_VERSION = "v1.5.0"
+#
+# **This does NOT track the app version.** CI only builds the four install
+# bundles; the ten model files are uploaded once, by hand, to whichever release
+# hosts them. Pointing this at the current tag would mean every new release has
+# to re-upload ~579 MB, and — worse — deleting an older release silently breaks
+# model downloads for everybody still running the version that referenced it.
+# That is exactly what happened: this used to say "v1.5.0", and removing that
+# release turned model downloads into 404s for every 1.5.x install.
+#
+# v1.5.4 is a release we keep, and it carries a full copy of all ten files.
+# Change this only together with re-uploading them somewhere else.
+MT_VERSION = "v1.5.4"
 MT_BASE = f"https://github.com/jiangyuyi/asr/releases/download/{MT_VERSION}"
 MT_HF = "https://huggingface.co/Helsinki-NLP"
 
