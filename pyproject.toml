@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "asr-mm"
-version = "1.5.4"
+version = "1.6.0"
 description = "视频指定时间段 → 语音转写"
 readme = "README.md"
 requires-python = ">=3.9"

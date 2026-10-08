@@ -124,6 +124,11 @@ for idx, (code, _native) in enumerate(i18n.available_languages()):
     # 界面是真的，文字是虚构的：直接注入结果而不跑识别。
     win.result = fake_transcript()
     win._fill_table(win.result)
+    # 填表/加载视频过程中可能留下一个选中的单元格，截图里会是一块蓝底，
+    # 看着像出了错。README 首图不该有这种东西。
+    win.table.clearSelection()
+    win.table.setCurrentCell(-1, -1)
+    win.table.setFocus()
     for b in (win.btn_copy, win.btn_save, win.btn_clip):
         b.setEnabled(True)
     win.btn_run.setEnabled(True)
