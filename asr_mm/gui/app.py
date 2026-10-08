@@ -35,8 +35,15 @@ VIDEO_SUFFIXES = ("*.mp4 *.mkv *.avi *.mov *.flv *.wmv *.m4v *.ts *.webm "
 
 # Result table columns. Translations are columns of their own rather than extra
 # lines inside the text cell, so one utterance stays one row all the way into
-# the workbook.
-COL_START, COL_DUR, COL_TEXT, COL_EN, COL_JA = range(5)
+# the workbook. The last column holds a per-row undo button — hand-fixing a
+# misheard line is normal, and "put it back the way the model said it" needs to
+# be one click, not re-transcribing.
+COL_START, COL_DUR, COL_TEXT, COL_EN, COL_JA, COL_UNDO = range(6)
+
+# The three columns a user can edit, and how the undo dialog names them.
+EDITABLE_COLS = (COL_TEXT, COL_EN, COL_JA)
+COL_LABELS = {COL_TEXT: "table.col_text", COL_EN: "table.col_en",
+              COL_JA: "table.col_ja"}
 
 
 def tc(seconds: float) -> str:
@@ -106,6 +113,10 @@ class MainWindow(QMainWindow):
         self._tr_inputs: tuple[list[str], list[str]] = ([], [])
         # target -> per-row translations, index aligned with result.segments
         self.translations: dict[str, list[str]] = {}
+        # (row, col) -> the text the engine produced. This is what undo restores;
+        # it is only ever written when a cell is filled or re-translated, never
+        # when the user edits, so it keeps meaning "the original".
+        self.initial_cells: dict[tuple[int, int], str] = {}
         self.loader: LoadWorker | None = None
         self._load_dialog: LoadProgressDialog | None = None
         self._pending_path: Path | None = None
@@ -312,12 +323,16 @@ class MainWindow(QMainWindow):
         root.addWidget(self.sec_results)
         root.addLayout(trow)
 
-        self.table = QTableWidget(0, 5)
+        self.table = QTableWidget(0, 6)
         self.table.setColumnWidth(0, 100)
         self.table.setColumnWidth(1, 70)
-        for col in (COL_TEXT, COL_EN, COL_JA):
+        for col in EDITABLE_COLS:
             self.table.horizontalHeader().setSectionResizeMode(
                 col, QHeaderView.Stretch)
+        # 撤销列固定窄宽，按钮在里面居中；跟着拉伸会显得很空。
+        self.table.horizontalHeader().setSectionResizeMode(
+            COL_UNDO, QHeaderView.Fixed)
+        self.table.setColumnWidth(COL_UNDO, self._undo_col_width())
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.itemSelectionChanged.connect(self._on_row_selected)
@@ -325,6 +340,8 @@ class MainWindow(QMainWindow):
         self.table.setEditTriggers(QTableWidget.DoubleClicked
                                     | QTableWidget.EditKeyPressed
                                     | QTableWidget.AnyKeyPressed)
+        # 只关心「哪几列被改过」，用来点亮/熄灭撤销按钮。
+        self.table.itemChanged.connect(self._on_item_changed)
         root.addWidget(self.table, 2)
 
         # ---- bottom bar
@@ -455,7 +472,12 @@ class MainWindow(QMainWindow):
                                               t("table.col_dur"),
                                               t("table.col_text"),
                                               t("table.col_en"),
-                                              t("table.col_ja")])
+                                              t("table.col_ja"),
+                                              t("table.col_undo")])
+        # 表头和按钮文案都要跟着语言切换走。
+        self.table.setColumnWidth(COL_UNDO, self._undo_col_width())
+        for row in range(self.table.rowCount()):
+            self._refresh_undo_button(row)
         self.btn_copy.setText(t("action.copy"))
         self.btn_save.setText(t("action.export"))
         self.btn_clip.setText(t("action.export_clip"))
@@ -922,6 +944,8 @@ class MainWindow(QMainWindow):
         self.worker = None
         self.result = result
         self.translations = {}
+        # 换一段视频/区间重来，上一段的基线就没意义了。
+        self.initial_cells = {}
         self.progress.hide()
         self.btn_run.setEnabled(True)
         self._fill_table(result)
@@ -948,6 +972,8 @@ class MainWindow(QMainWindow):
 
     def _fill_table(self, result: transcribe.Transcript) -> None:
         self.table.setRowCount(len(result.segments))
+        # 填表会触发 itemChanged，这里不让它去点按钮。
+        self.table.blockSignals(True)
         for row, seg in enumerate(result.segments):
             t0 = QTableWidgetItem(tc(seg.start))
             t1 = QTableWidgetItem(f"{seg.duration:.1f}s")
@@ -965,7 +991,113 @@ class MainWindow(QMainWindow):
                 if col in (COL_START, COL_DUR):
                     item.setFlags(item.flags() & ~Qt.ItemIsEditable)
                 self.table.setItem(row, col, item)
+                if col in EDITABLE_COLS:
+                    # 引擎产出的原样，只有这里和 _on_translated 会写它。
+                    self.initial_cells[(row, col)] = item.text()
+            self._make_undo_button(row)
+        self.table.blockSignals(False)
+        for row in range(self.table.rowCount()):
+            self._refresh_undo_button(row)
         self.table.resizeRowsToContents()
+
+    # ------------------------------------------------------------------- undo
+    def _undo_col_width(self) -> int:
+        """撤销列的宽度：至少放得下按钮，也要放得下当前语言的表头。
+
+        「撤销 / Undo / 元に戻す」三档长度差不少，按死宽度的话日文表头会被
+        截成「元に…」。
+        """
+        from PySide6.QtGui import QFontMetrics
+        head = QFontMetrics(self.table.horizontalHeader().font())
+        return max(60, head.horizontalAdvance(t("table.col_undo")) + 22)
+
+    def _make_undo_button(self, row: int) -> None:
+        btn = QPushButton(t("row.undo"), self)
+        btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        # 单元格有多高全看内容有多长，按钮跟着拉伸就会一行一个样。固定住。
+        btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        btn.setFixedSize(34, 26)
+        btn.setToolTip(t("row.undo_tip"))
+        btn.clicked.connect(lambda _=False, r=row: self._on_undo_clicked(r))
+        self.table.setCellWidget(row, COL_UNDO, btn)
+
+    def _edited_cols(self, row: int) -> list[int]:
+        """Which of this row's editable cells no longer match the engine output."""
+        out = []
+        for col in EDITABLE_COLS:
+            item = self.table.item(row, col)
+            if item is None:
+                continue
+            if item.text() != self.initial_cells.get((row, col), item.text()):
+                out.append(col)
+        return out
+
+    def _refresh_undo_button(self, row: int) -> None:
+        btn = self.table.cellWidget(row, COL_UNDO)
+        if btn is None:
+            return
+        btn.setText(t("row.undo"))
+        btn.setToolTip(t("row.undo_tip"))
+        changed = self._edited_cols(row)
+        btn.setEnabled(bool(changed))
+        # 没改过就安静点，免得整张表全是亮着的按钮。
+        btn.setVisible(True)
+
+    def _on_item_changed(self, item) -> None:
+        row = item.row()
+        if item.column() in EDITABLE_COLS:
+            self._refresh_undo_button(row)
+
+    def _on_undo_clicked(self, row: int) -> None:
+        changed = self._edited_cols(row)
+        if not changed:
+            return
+        pairs = [(col, self.table.item(row, col).text(),
+                  self.initial_cells.get((row, col), ""))
+                 for col in changed]
+        if not self._confirm_undo(row, pairs):
+            return
+        self.table.blockSignals(True)
+        for col, _cur, original in pairs:
+            self.table.item(row, col).setText(original)
+        self.table.blockSignals(False)
+        self._refresh_undo_button(row)
+        self.statusBar().showMessage(
+            t("undo.done", row=row + 1, count=len(pairs)))
+
+    def _undo_diff_text(self, pairs) -> str:
+        """The before/after listing shown in the undo confirmation.
+
+        Split out from the dialog so it can be asserted directly — this is the
+        whole point of the prompt, and a regression here means the user confirms
+        a destructive action without ever seeing what they lose.
+        """
+        lines = []
+        for col, current, original in pairs:
+            lines.append(t("undo.col", name=t(COL_LABELS[col])))
+            lines.append(t("undo.original", text=original or t("undo.empty")))
+            lines.append(t("undo.current", text=current or t("undo.empty")))
+            lines.append("")
+        lines.append(t("undo.irreversible"))
+        return "\n".join(lines).rstrip()
+
+    def _confirm_undo(self, row: int, pairs) -> bool:
+        """Ask before throwing edits away, and show what will be lost.
+
+        Restoring is not reversible from the UI, and a half-typed correction is
+        easy to click away by accident — so the dialog puts the two versions
+        side by side instead of just naming the row.
+        """
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle(t("undo.title"))
+        box.setText(t("undo.question", row=row + 1))
+        box.setInformativeText(self._undo_diff_text(pairs))
+        yes = box.addButton(t("undo.confirm"), QMessageBox.ButtonRole.AcceptRole)
+        box.addButton(t("load.cancel"), QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(yes)
+        box.exec()
+        return box.clickedButton() is yes
 
     # ------------------------------------------------------------- translate
     def _selected_targets(self) -> list[str]:
@@ -1040,6 +1172,7 @@ class MainWindow(QMainWindow):
         self.progress.hide()
         self.btn_tr_cancel.hide()
         self.btn_translate.show()
+        self.table.blockSignals(True)
         for code in targets:
             values = result.texts.get(code) or []
             self.translations[code] = values
@@ -1047,7 +1180,13 @@ class MainWindow(QMainWindow):
             for row in range(self.table.rowCount()):
                 item = self.table.item(row, col)
                 if item is not None:
-                    item.setText(values[row] if row < len(values) else "")
+                    text = values[row] if row < len(values) else ""
+                    item.setText(text)
+                    # 重新翻译过的结果就是新的「最初」，撤销回到这里。
+                    self.initial_cells[(row, col)] = text
+        for row in range(self.table.rowCount()):
+            self._refresh_undo_button(row)
+        self.table.blockSignals(False)
         self.table.resizeRowsToContents()
         langs = "、".join(t("mt." + c) for c in targets)
         self.statusBar().showMessage(t(
