@@ -122,3 +122,8 @@ build_playback_shot.png
 build_screen_shot/
 build_dl151/
 build_thumb/
+
+# 本地草稿：用户自己的转写文本，绝不入库
+drafts/
+*.draft.json
+*.draft.json.tmp

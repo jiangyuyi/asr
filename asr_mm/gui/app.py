@@ -17,15 +17,16 @@ from PySide6.QtGui import QAction, QDragEnterEvent, QDropEvent, QKeySequence
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
-    QFrame, QHBoxLayout, QHeaderView, QLabel, QMainWindow, QMenu, QMessageBox,
-    QProgressBar, QPushButton, QSizePolicy, QSplitter,
+    QApplication, QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFileDialog,
+    QFormLayout, QFrame, QHBoxLayout, QHeaderView, QLabel, QMainWindow, QMenu,
+    QMessageBox, QProgressBar, QPushButton, QSizePolicy, QSplitter,
     QTableWidget, QTableWidgetItem, QTimeEdit, QVBoxLayout, QWidget,
 )
 
-from .. import __version__, catalog, downloader, engine, media, transcribe
+from .. import __version__, catalog, downloader, drafts, engine, media, transcribe
 from ..i18n import available_languages, get_language, set_language, t
 from ..srt import format_ts, render_srt, render_txt
+from .drafts_dialog import DraftsDialog
 from .loader import LoadProgressDialog, LoadWorker, PROBE_SHARE
 from .range_slider import RangeSlider
 from .worker import Job, TranscribeWorker, TranslateWorker
@@ -117,6 +118,16 @@ class MainWindow(QMainWindow):
         # it is only ever written when a cell is filled or re-translated, never
         # when the user edits, so it keeps meaning "the original".
         self.initial_cells: dict[tuple[int, int], str] = {}
+        # 草稿：当前这份结果在磁盘上的副本。id 固定下来，多次保存写同一个
+        # 文件而不是每次新建一份。
+        self.draft_id: str | None = None
+        self._draft_dirty = False
+        self._draft_created_at: float | None = None
+        self._pruned = False
+        self._draft_timer = QTimer(self)
+        self._draft_timer.setSingleShot(True)
+        self._draft_timer.setInterval(1200)
+        self._draft_timer.timeout.connect(self._save_draft_now)
         self.loader: LoadWorker | None = None
         self._load_dialog: LoadProgressDialog | None = None
         self._pending_path: Path | None = None
@@ -357,6 +368,10 @@ class MainWindow(QMainWindow):
         bottom.addWidget(self.btn_copy)
         bottom.addWidget(self.btn_save)
         bottom.addWidget(self.btn_clip)
+        # 找回来入口放在最显眼的地方：丢过数据的人不会先去翻菜单。
+        self.btn_drafts = QPushButton()
+        self.btn_drafts.clicked.connect(self.open_drafts)
+        bottom.addWidget(self.btn_drafts)
         bottom.addStretch(1)
         self.progress = QProgressBar()
         self.progress.setRange(0, 0)
@@ -414,6 +429,9 @@ class MainWindow(QMainWindow):
         self.act_open_models = QAction(self)
         self.act_open_models.triggered.connect(self.open_models_dir)
         self.menu_tools.addAction(self.act_open_models)
+        self.act_drafts = QAction(self)
+        self.act_drafts.triggered.connect(self.open_drafts)
+        self.menu_tools.addAction(self.act_drafts)
         self.act_net = QAction(self)
         self.act_net.triggered.connect(self.network_settings)
         self.menu_tools.addAction(self.act_net)
@@ -481,6 +499,7 @@ class MainWindow(QMainWindow):
         self.btn_copy.setText(t("action.copy"))
         self.btn_save.setText(t("action.export"))
         self.btn_clip.setText(t("action.export_clip"))
+        self.btn_drafts.setText(t("menu.drafts"))
 
         self.menu_file.setTitle(t("menu.file"))
         self.act_open.setText(t("menu.open"))
@@ -489,6 +508,7 @@ class MainWindow(QMainWindow):
         self.act_download.setText(t("menu.download_models"))
         self.act_download_mt.setText(t("menu.download_mt"))
         self.act_open_models.setText(t("menu.open_models"))
+        self.act_drafts.setText(t("menu.drafts"))
         self.act_net.setText(t("net.title"))
         self.act_doctor.setText(t("menu.doctor"))
         self.menu_help.setTitle(t("menu.help"))
@@ -634,6 +654,9 @@ class MainWindow(QMainWindow):
     def _apply_loaded(self, loaded) -> None:
         """Everything that used to happen synchronously in load_video()."""
         path, info = loaded.path, loaded.info
+        # 换视频会清空表格，先把上一份内容落盘，别把没存下的改动带走。
+        if self.result is not None:
+            self._save_draft_now()
         self.video_path, self.info = path, info
         self.result = None
         self.translations = {}
@@ -922,6 +945,8 @@ class MainWindow(QMainWindow):
         warning = catalog.resolve_model(key).warning_for(content)
         if warning:
             QMessageBox.warning(self, t("run"), warning)
+        if not self._confirm_replace():
+            return
         start, end = self._current_range()
         self.btn_run.setEnabled(False)
         self.progress.show()
@@ -942,6 +967,11 @@ class MainWindow(QMainWindow):
 
     def _on_done(self, result: transcribe.Transcript) -> None:
         self.worker = None
+        # 换新结果之前，先把上一份（含还没落盘的手改）存下来。
+        # 不存的话，「改完不到 1.2 秒就又转写一次」这一下里，那次手改
+        # 既没进磁盘、又被新表格顶掉了，就真的没了。
+        if self.result is not None:
+            self._save_draft_now()
         self.result = result
         self.translations = {}
         # 换一段视频/区间重来，上一段的基线就没意义了。
@@ -951,6 +981,11 @@ class MainWindow(QMainWindow):
         self._fill_table(result)
         for b in (self.btn_copy, self.btn_save, self.btn_clip):
             b.setEnabled(True)
+        # 每次转写都开一份新草稿：再点一次「开始转写」不会把上一份盖掉，
+        # 上一份还在草稿列表里。
+        self.draft_id = drafts.new_id()
+        self._draft_created_at = None
+        self._save_draft_now()
         self._refresh_translate_state()
         speed = f"{1 / result.rtf:.0f}×" if result.rtf else "—"
         fmt = t("status.done", count=len(result.segments),
@@ -1047,6 +1082,8 @@ class MainWindow(QMainWindow):
         row = item.row()
         if item.column() in EDITABLE_COLS:
             self._refresh_undo_button(row)
+            # 改一个字就可能断电，得让它落盘。
+            self._schedule_draft_save()
 
     def _on_undo_clicked(self, row: int) -> None:
         changed = self._edited_cols(row)
@@ -1096,6 +1133,147 @@ class MainWindow(QMainWindow):
         yes = box.addButton(t("undo.confirm"), QMessageBox.ButtonRole.AcceptRole)
         box.addButton(t("load.cancel"), QMessageBox.ButtonRole.RejectRole)
         box.setDefaultButton(yes)
+        box.exec()
+        return box.clickedButton() is yes
+
+    # ---------------------------------------------------------------- drafts
+    def _draft_segments(self) -> list[dict]:
+        """表格当前的样子，转成可以直接写 JSON 的字典。
+
+        时间轴来自转写结果，文字来自表格——手改过的那份才是要存的。
+        """
+        segs = list(self.result.segments) if self.result else []
+        rows = []
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, COL_TEXT)
+            seg = segs[row] if row < len(segs) else None
+            rows.append({
+                "start": seg.start if seg else 0.0,
+                "end": seg.end if seg else 0.0,
+                "text": item.text() if item is not None else "",
+                "suspicious": bool(seg.suspicious) if seg else False,
+            })
+        return rows
+
+    def _draft_baseline(self) -> dict[str, str]:
+        """引擎原样基线，键是 "行,列"。"""
+        return {f"{r},{c}": v for (r, c), v in self.initial_cells.items()}
+
+    def _edited_row_count(self) -> int:
+        return sum(1 for row in range(self.table.rowCount())
+                   if self._edited_cols(row))
+
+    def _schedule_draft_save(self) -> None:
+        """记下「有改动」，稍后合并写一次盘。
+
+        连续输入时每次按键都写盘会产生一堆小文件，所以这里只起个计时器，
+        真正的写盘在 _save_draft_now。
+        """
+        if self.result is None:
+            return
+        self._draft_dirty = True
+        self._draft_timer.start()
+
+    def _save_draft_now(self) -> bool:
+        """把当前表格写到磁盘。返回是否成功。
+
+        这一步是「编辑中的内容不会丢」的落地点：改一个字，1.2 秒后自动
+        存一次；退出时再强制存一次。所以崩掉、断电、任务管理器杀进程，
+        最多丢最后 1.2 秒的输入。
+        """
+        self._draft_timer.stop()
+        self._draft_dirty = False
+        if self.result is None:
+            return False
+        if self.draft_id is None:
+            self.draft_id = drafts.new_id()
+        d = drafts.Draft.build(
+            self.draft_id, self.result, segments=self._draft_segments(),
+            translations=self._current_translations() or {},
+            initial_cells=self._draft_baseline(),
+            created_at=self._draft_created_at,
+        )
+        d.edited = self._edited_row_count() > 0
+        try:
+            drafts.save(d)
+        except OSError as exc:
+            self.statusBar().showMessage(t("drafts.save_failed", error=exc))
+            return False
+        self._draft_created_at = d.created_at
+        if not self._pruned:
+            # 老草稿别无限攒着。一次会话清一次就够。
+            self._pruned = True
+            try:
+                drafts.prune()
+            except OSError:
+                pass
+        return True
+
+    def open_drafts(self) -> None:
+        """列出存过的草稿，载入一份之前的结果。"""
+        dlg = DraftsDialog(self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        d = dlg.selected
+        if d is not None:
+            self._load_draft(d)
+
+    def _load_draft(self, d: drafts.Draft) -> None:
+        """把一份草稿放回表格。"""
+        result = d.to_transcript()
+        self.result = result
+        self.translations = {k: list(v)
+                             for k, v in (d.translations or {}).items()}
+        self.initial_cells = {}
+        self.draft_id = d.id
+        self._draft_created_at = d.created_at
+        self._draft_dirty = False
+        self._fill_table(result)
+        # _fill_table 把表格里的当前文字当成引擎原样，这里换回草稿里存的
+        # 基线：没有它，载入之后撤销按钮全是灰的，分不清哪些句被改过。
+        base: dict[tuple[int, int], str] = {}
+        for key, text in (d.initial_cells or {}).items():
+            try:
+                r, c = (int(x) for x in str(key).split(",", 1))
+            except (TypeError, ValueError):
+                continue
+            if 0 <= r < self.table.rowCount() and c in EDITABLE_COLS:
+                base[(r, c)] = text
+        self.initial_cells.update(base)
+        for row in range(self.table.rowCount()):
+            self._refresh_undo_button(row)
+        for b in (self.btn_copy, self.btn_save, self.btn_clip):
+            b.setEnabled(True)
+        self._refresh_translate_state()
+        self.statusBar().showMessage(
+            t("drafts.loaded", count=len(result.segments)))
+
+    def _confirm_replace(self) -> bool:
+        """表格里已经有内容时，再转写一次会整表替换——先问一句。
+
+        问之前先把当前内容存成草稿：即使用户点了「重新转写」，旧内容
+        也还在草稿列表里，随时能捞回来。
+        """
+        if self.result is None:
+            return True
+        self._save_draft_now()
+        rows = self.table.rowCount()
+        if rows == 0:
+            return True
+        edited = self._edited_row_count()
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle(t("drafts.replace.title"))
+        box.setText(t("drafts.replace.question", count=rows))
+        note = t("drafts.replace.note")
+        if edited:
+            note = t("drafts.replace.edited", count=edited) + "\n" + note
+        box.setInformativeText(note)
+        yes = box.addButton(t("drafts.replace.confirm"),
+                            QMessageBox.ButtonRole.AcceptRole)
+        no = box.addButton(t("load.cancel"), QMessageBox.ButtonRole.RejectRole)
+        # 默认落在「取消」上：回车键不该替用户做覆盖的决定。
+        box.setDefaultButton(no)
         box.exec()
         return box.clickedButton() is yes
 
@@ -1192,6 +1370,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(t(
             "status.translated", langs=langs, count=len(texts),
             elapsed=f"{result.elapsed:.1f}"))
+        self._schedule_draft_save()
         self._refresh_translate_state()
 
     def _on_translate_failed(self, msg: str) -> None:
@@ -1306,6 +1485,8 @@ class MainWindow(QMainWindow):
                 return
 
     def closeEvent(self, ev) -> None:
+        # 退出前把最后一点改动写下去。
+        self._save_draft_now()
         self._close_load_dialog()
         if self.loader is not None:
             self.loader.cancel()

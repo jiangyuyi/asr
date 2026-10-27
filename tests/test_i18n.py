@@ -64,6 +64,77 @@ def _placeholders(template: str) -> list[str]:
     return re.findall(r"\{(\w+)[^}]*\}", template)
 
 
+# ------------------------------------------------------- 串台（写串了语言）
+def _is_cjk(ch: str) -> bool:
+    if not ch:
+        return False
+    o = ord(ch)
+    return (0x3400 <= o <= 0x9FFF or 0xF900 <= o <= 0xFAFF
+            or 0x3040 <= o <= 0x30FF or 0x31F0 <= o <= 0x31FF)
+
+
+def _is_kana(ch: str) -> bool:
+    if not ch:
+        return False
+    o = ord(ch)
+    return 0x3040 <= o <= 0x30FF or 0x31F0 <= o <= 0x31FF
+
+
+def _without_quotes(value: str) -> str:
+    """去掉「」“”"" 里引用的部分。
+
+    举例说明别的语言怎么译的时候，正文里本来就会嵌一段日文或中文
+    （mt.ja.note 里就有一个日文例句）。那些是引用，不是串台。
+    """
+    import re
+    for a, b in (("「", "」"), ("“", "”"), ("‘", "’")):
+        value = re.sub(a + r".*?" + b, " ", value, flags=re.S)
+    return value
+
+
+# 简体字里日语不用的那批写法。日文用旧字体，简体形式在日文里根本不会出现，
+# 所以在日文串里看到它们 = 抄了中文进来。
+SC_ONLY = set("这说请让还们转译应该从关删认显试验录编辑软长门问")
+
+
+def test_english_strings_contain_no_cjk():
+    """英文串里混进中文或日文，一眼就看出来了——不该有（引用的除外）。"""
+    for key, value in i18n.EN.items():
+        body = _without_quotes(value)
+        bad = [c for c in body if _is_cjk(c)]
+        assert not bad, f"en:{key} 混进了非拉丁字符 {bad!r} -> {value!r}"
+
+
+def test_chinese_strings_contain_no_kana():
+    for key, value in i18n.ZH.items():
+        body = _without_quotes(value)
+        bad = [c for c in body if _is_kana(c)]
+        assert not bad, f"zh:{key} 混进了假名 {bad!r} -> {value!r}"
+
+
+def test_japanese_strings_contain_no_simplified_chinese():
+    for key, value in i18n.JA.items():
+        body = _without_quotes(value)
+        bad = sorted(set(body) & SC_ONLY)
+        assert not bad, f"ja:{key} 混进了简体字 {bad!r} -> {value!r}"
+
+
+def test_no_ascii_word_sits_inside_cjk_text():
+    """「書き起こしICPのあと」这种：一段拉丁字母夹在东亚文字中间。
+
+    这种串几乎总是抄错了——把某个缩写/片段手滑粘进了另一种语言的句子。
+    """
+    import re
+    for code, cat in i18n.CATALOGS.items():
+        for key, value in cat.items():
+            body = _without_quotes(value)
+            for m in re.finditer(r"[A-Za-z]{2,}", body):
+                before = body[m.start() - 1] if m.start() else ""
+                after = body[m.end()] if m.end() < len(body) else ""
+                assert not (_is_cjk(before) or _is_cjk(after)), (
+                    f"{code}:{key} 的 {m.group()!r} 紧挨着东亚文字 -> {value!r}")
+
+
 # ------------------------------------------------------------------ behaviour
 
 @pytest.mark.parametrize("code,expected", [
